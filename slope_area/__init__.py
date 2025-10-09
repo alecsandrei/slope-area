@@ -6,6 +6,7 @@ import PySAGA_cmd
 import whitebox_workflows as wbw
 
 from slope_area.logger import (
+    ColoredFormatter,
     ErrorFilter,
     JSONFormatter,
     NonErrorFilter,
@@ -13,13 +14,13 @@ from slope_area.logger import (
     setup_logging,
 )
 
-__all__ = ['ErrorFilter', 'JSONFormatter', 'NonErrorFilter']
+__all__ = ['ErrorFilter', 'JSONFormatter', 'NonErrorFilter', 'ColoredFormatter']
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
 setup_logging()
-logger = create_logger(__file__)
+logger = create_logger(__name__)
 
 logger.info('Initialized Whitebox Environment')
 WBE_ENV: WbEnvironment = wbw.WbEnvironment()

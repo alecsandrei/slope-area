@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import logging
 import logging.config
+import sys
 import typing as t
 
 from slope_area.config import LOGGING_CONFIG, PROJ_ROOT
@@ -33,6 +34,53 @@ LOG_RECORD_BUILTIN_ATTRS = {
     'threadName',
     'taskName',
 }
+
+
+# ANSI escape sequences
+_RESET = '\x1b[0m'
+_COLORS = {
+    'DEBUG': '\x1b[36m',  # cyan
+    'INFO': '\x1b[32m',  # green
+    'WARNING': '\x1b[33m',  # yellow
+    'ERROR': '\x1b[31m',  # red
+    'CRITICAL': '\x1b[41m',  # red background
+}
+
+
+class ColoredFormatter(logging.Formatter):
+    """
+    Logging formatter that injects ANSI colors based on the record level.
+    Works with any handler that emits to a terminal (StreamHandler to sys.stdout/stderr).
+    """
+
+    def __init__(
+        self, fmt=None, datefmt=None, style='%', use_colors: bool = True
+    ):
+        super().__init__(fmt=fmt, datefmt=datefmt, style=style)
+        self.use_colors = use_colors and self._stream_supports_color()
+
+    def format(self, record: logging.LogRecord) -> str:
+        levelname = record.levelname
+        if self.use_colors and levelname in _COLORS:
+            color = _COLORS[levelname]
+            # color the levelname only (safer than coloring entire message)
+            record.levelname = f'{color}{levelname}{_RESET}'
+            # optionally color message or name: e.g. record.name = f"{color}{record.name}{_RESET}"
+        formatted = super().format(record)
+        # restore original levelname (important if other handlers use this record)
+        record.levelname = levelname
+        return formatted
+
+    @staticmethod
+    def _stream_supports_color() -> bool:
+        """
+        Return True if the running system's stdout/stderr likely supports ANSI colors.
+        Simple heuristic: isatty + not Windows lacking ANSI support.
+        """
+        try:
+            return sys.stderr.isatty() or sys.stdout.isatty()
+        except Exception:
+            return False
 
 
 class JSONFormatter(logging.Formatter):

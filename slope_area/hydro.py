@@ -18,7 +18,7 @@ if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
     from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-logger = create_logger(__file__)
+logger = create_logger(__name__)
 
 
 @dataclass(frozen=True)
