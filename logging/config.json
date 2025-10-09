@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "simple": {
+      "format": "%(levelname)s: %(message)s",
+      "datefmt": "%Y-%m-%dT%H:%M:%S%z"
+    },
+    "json": {
+      "()": "slope_area.JSONFormatter",
+      "fmt_keys": {
+        "level": "levelname",
+        "message": "message",
+        "timestamp": "timestamp",
+        "logger": "name",
+        "module": "module",
+        "function": "funcName",
+        "line": "lineno",
+        "thread_name": "threadName"
+      }
+    }
+  },
+  "filters": {
+    "no_errors": {
+      "()": "slope_area.NonErrorFilter"
+    },
+    "errors": {
+      "()": "slope_area.ErrorFilter"
+    }
+  },
+  "handlers": {
+    "stdout": {
+      "class": "logging.StreamHandler",
+      "formatter": "simple",
+      "stream": "ext://sys.stdout",
+      "filters": [
+        "no_errors"
+      ]
+    },
+    "stderr": {
+      "class": "logging.StreamHandler",
+      "formatter": "simple",
+      "stream": "ext://sys.stderr",
+      "filters": [
+        "errors"
+      ]
+    },
+    "slopeAreaFile": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "level": "DEBUG",
+      "formatter": "json",
+      "filename": "logging/slopeArea.log.jsonl",
+      "maxBytes": 1000000,
+      "backupCount": 3
+    }
+  },
+  "loggers": {
+    "root": {
+      "level": "ERROR",
+      "handlers": [
+        "slopeAreaFile"
+      ]
+    },
+    "slopeArea": {
+      "level": "DEBUG",
+      "handlers": [
+        "stdout",
+        "stderr",
+        "slopeAreaFile"
+      ],
+      "propagate": false
+    }
+  }
+}

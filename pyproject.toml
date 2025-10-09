@@ -1,0 +1,58 @@
+[project]
+name = "slope_area"
+version = "0.1.0"
+description = "Tool that can be used to generate slope-area plots and other analysis."
+readme = "README.md"
+requires-python = "~=3.12.0"
+license = { file = "LICENSE" }
+authors = [{ name = "Alex-Andrei Cuvuliuc" }, { name = "Ursu-Denisa Elena" }]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+]
+dependencies = [
+  "geopandas>=1.1.1",
+  "pysaga-cmd>=1.2.6",
+  "python-dotenv",
+  "whitebox-workflows>=1.3.5",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18.2",
+  "pytest>=8.4.2",
+  "ruff>=0.14.0",
+]
+
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 80
+indent-width = 4
+src = ["slope_area"]
+include = ["pyproject.toml", "slope_area/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+extend-select = ["I"]  # Add import sorting
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.isort]
+known-first-party = ["slope_area"]
+force-sort-within-sections = true
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
