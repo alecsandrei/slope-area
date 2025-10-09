@@ -40,21 +40,6 @@ Tool that can be used to generate slope-area plots and other analysis.
 ├── setup.cfg          <- Configuration file for flake8
 │
 └── slope_area   <- Source code for use in this project.
-    │
-    ├── __init__.py             <- Makes slope_area a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
 ```
 
 --------
