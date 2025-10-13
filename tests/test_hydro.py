@@ -7,7 +7,9 @@ from slope_area.hydro import HydrologicAnalysis
 TEST_DATA_DIR = Path(__file__).parent / 'data'
 
 
-def test_hydrologic_analysis_process():
+def test_hydrologic_analysis_process(tmpdir: Path):
     dem = TEST_DATA_DIR / 'dem.tif'
     outlet = TEST_DATA_DIR / 'outlet.shp'
-    HydrologicAnalysis(dem, outlet).process()
+    HydrologicAnalysis(dem, tmpdir).compute_slope_gradient(
+        outlet, streams_flow_accum_threshold=100, outlet_snap_dist=100
+    )
