@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from slope_area.hydro import HydrologicAnalysis
+from slope_area.geomorphometry import HydrologicAnalysis
 
 TEST_DATA_DIR = Path(__file__).parent / 'data'
 
