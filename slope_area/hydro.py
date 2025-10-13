@@ -1,177 +1,198 @@
 from __future__ import annotations
 
+import collections.abc as c
 from dataclasses import dataclass
+from functools import partial
 import logging
-from os import fspath
-import typing as t
+from os import PathLike, fspath, makedirs
+from pathlib import Path
 
-import geopandas as gpd
+from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
+from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area import SAGA_ENV, WBE_ENV
-from slope_area.config import INTERIM_DATA_DIR, RAW_DATA_DIR
+from slope_area import SAGA_ENV, WBW_ENV
+from slope_area.config import DATA_DIR, INTERIM_DATA_DIR, RAW_DATA_DIR
 from slope_area.logger import create_logger
-from slope_area.utils import timeit
-
-if t.TYPE_CHECKING:
-    from os import PathLike
-
-    from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
-    from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
+from slope_area.utils import timeit, write_whitebox
 
 logger = create_logger(__name__)
 
 
 @dataclass(frozen=True)
-class HydrologicAnalysisOutput:
+class ComputationOutput:
+    def write_whitebox(
+        self,
+        out_dir: Path,
+        prefix: str = '',
+        names: c.Sequence[str] | None = None,
+        *,
+        logger: logging.Logger | None = None,
+        recurse: bool = False,
+        overwrite: bool = False,
+    ):
+        if logger is None:
+            logger = create_logger(__file__)
+        makedirs(out_dir, exist_ok=True)
+        for name, output in self.__dict__.items():
+            if names is not None and name not in names:
+                continue
+            output = self.__dict__[name]
+            out_base = out_dir / f'{prefix}{name}'
+            out_file = None
+            if isinstance(output, WhiteboxRaster):
+                out_file = out_base.with_suffix('.tif')
+            elif isinstance(output, WhiteboxVector):
+                out_file = out_base.with_suffix('.shp')
+            elif isinstance(output, ComputationOutput):
+                if recurse:
+                    output.write_whitebox(
+                        out_dir=out_dir / name, prefix=prefix, recurse=recurse
+                    )
+                continue
+            else:
+                logger.error(
+                    'Failed to save %s. Unknown Whitebox Workflows object %s'
+                    % (name, output)
+                )
+                continue
+            write_whitebox(output, out_file, logger=logger, overwrite=overwrite)
+
+
+@dataclass(frozen=True)
+class FlowAccumulationComputationOutput(ComputationOutput):
     dem_preproc: WhiteboxRaster
-    streams: WhiteboxVector
+    d8_pointer: WhiteboxRaster
     flow_accumulation: WhiteboxRaster
-    slope_gradient: WhiteboxRaster
+
+
+@dataclass(frozen=True)
+class WatershedComputationOutput(ComputationOutput):
+    flow: FlowAccumulationComputationOutput
+    outlet: WhiteboxVector
+    watershed: WhiteboxRaster
+
+
+@dataclass(frozen=True)
+class SlopeGradientComputationOutput(ComputationOutput):
+    watershed: WatershedComputationOutput
+    flow_watershed: FlowAccumulationComputationOutput
+    streams_watershed: WhiteboxRaster
+    slope_gradient_watershed: WhiteboxRaster
 
 
 @dataclass
 class HydrologicAnalysis:
     dem: WhiteboxRaster
-    outlet: WhiteboxVector
-    streams_threshold: int
-    outlet_snap_dist_units: int
+    out_dir: Path
 
-    def __init__(
-        self,
-        dem: PathLike,
-        outlet: PathLike,
-        streams_threshold: int = 100,
-        outlet_snap_dist_units: int = 15,
-    ):
-        logger.info('Reading the DEM and the outlet')
-        self.dem = WBE_ENV.read_raster(fspath(dem))
-        self.outlet = WBE_ENV.read_vector(fspath(outlet))
-        self.streams_threshold = streams_threshold
-        self.outlet_snap_dist_units = outlet_snap_dist_units
+    def __init__(self, dem: PathLike, out_dir: PathLike = INTERIM_DATA_DIR):
+        logger.info('Reading the DEM.')
+        self.dem = WBW_ENV.read_raster(fspath(dem))
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(exist_ok=True)
 
-    @timeit(logger, logging.INFO)
-    def process(self) -> HydrologicAnalysisOutput:
+    @timeit(logger, logging.DEBUG)
+    def preprocess_dem(self) -> WhiteboxRaster:
         logger.info('Breaching depressions in the DEM.')
-        dem_preproc_path = INTERIM_DATA_DIR / 'dem_preproc.tif'
-        dem_preproc = WBE_ENV.breach_depressions_least_cost(
+        dem_preproc = WBW_ENV.breach_depressions_least_cost(
             dem=self.dem, fill_deps=True
         )
-        dem_preproc = WBE_ENV.breach_single_cell_pits(dem_preproc)
-        WBE_ENV.write_raster(dem_preproc, dem_preproc_path.as_posix())
+        logger.info('Breaching single-cell pits.')
+        dem_preproc = WBW_ENV.breach_single_cell_pits(dem_preproc)
+        return dem_preproc
 
-        logger.info('Computing the D8 pointer.')
-        d8_path = INTERIM_DATA_DIR / 'd8.tif'
-        d8 = WBE_ENV.d8_pointer(dem_preproc)
-        WBE_ENV.write_raster(d8, d8_path.as_posix())
-
-        logger.info('Computing the flow accumulation.')
-        flow_path = INTERIM_DATA_DIR / 'flow.tif'
-        flow = WBE_ENV.d8_flow_accum(d8, input_is_pointer=True)
-        WBE_ENV.write_raster(flow, flow_path.as_posix())
-
-        logger.info(
-            'Extracting the streams using a flow accumulation threshold of %i.'
-            % self.streams_threshold
+    @timeit(logger, logging.DEBUG)
+    def compute_flow(
+        self, dem_preproc: WhiteboxRaster | None = None
+    ) -> FlowAccumulationComputationOutput:
+        dem_preproc = (
+            dem_preproc if dem_preproc is not None else self.preprocess_dem()
         )
-        streams_path = INTERIM_DATA_DIR / 'streams.tif'
-        streams = WBE_ENV.extract_streams(
-            flow, threshold=self.streams_threshold
+        d8_pointer = WBW_ENV.d8_pointer(dem_preproc)
+        flow = WBW_ENV.d8_flow_accum(
+            d8_pointer, out_type='catchment_area', input_is_pointer=True
         )
-        WBE_ENV.write_raster(streams, streams_path.as_posix())
+        return FlowAccumulationComputationOutput(dem_preproc, d8_pointer, flow)
 
-        logger.info(
-            'Snapping the outlet to the pixel with the highest flow accumulation within %i units.'
-            % self.outlet_snap_dist_units
+    @timeit(logger, logging.DEBUG)
+    def compute_watershed(
+        self,
+        outlet: WhiteboxVector | PathLike,
+        outlet_snap_dist: int | None = None,
+        dem_preproc: WhiteboxRaster | None = None,
+    ) -> WatershedComputationOutput:
+        if isinstance(outlet, PathLike):
+            outlet = WBW_ENV.read_vector(fspath(outlet))
+        flow_output = self.compute_flow(dem_preproc)
+        if outlet_snap_dist:
+            outlet = WBW_ENV.snap_pour_points(
+                outlet, flow_output.flow_accumulation, outlet_snap_dist
+            )
+        watershed = WBW_ENV.watershed(flow_output.d8_pointer, outlet)
+        return WatershedComputationOutput(flow_output, outlet, watershed)
+
+    @timeit(logger, logging.DEBUG)
+    def compute_slope_gradient(
+        self,
+        outlet: WhiteboxVector | Path,
+        streams_flow_accum_threshold: int = 100,
+        outlet_snap_dist: int | None = None,
+    ):
+        write_whitebox_func = partial(
+            write_whitebox, logger=logger, overwrite=True
         )
-        outlet_snapped_path = INTERIM_DATA_DIR / 'pour_point_snapped.shp'
-        outlet_snapped = WBE_ENV.snap_pour_points(
-            self.outlet, flow, snap_dist=self.outlet_snap_dist_units
+        if isinstance(outlet, Path):
+            outlet = WBW_ENV.read_vector(outlet.as_posix())
+        watershed_output = self.compute_watershed(outlet, outlet_snap_dist)
+        write_whitebox_func(
+            watershed_output.flow.dem_preproc,
+            self.out_dir / 'dem_preproc.tif',
         )
-        WBE_ENV.write_vector(outlet_snapped, outlet_snapped_path.as_posix())
-
-        logger.info('Generating the watershed.')
-        watershed_path = INTERIM_DATA_DIR / 'watershed.tif'
-        watershed = WBE_ENV.watershed(d8, outlet_snapped)
-        WBE_ENV.write_raster(watershed, watershed_path.as_posix())
-
-        # logger.info('Converting watershed to vector')
-        # watershed_as_vec_path = INTERIM_DATA_DIR / 'watershed.shp'
-        # watershed_as_vec = WBE_ENV.raster_to_vector_polygons(watershed)
-        # WBE_ENV.write_vector(watershed_as_vec, watershed_as_vec_path.as_posix())
+        write_whitebox_func(
+            watershed_output.watershed,
+            self.out_dir / 'watershed.tif',
+        )
 
         logger.info('Masking the preprocessed DEM with the watershed.')
-        dem_preproc_mask_path = INTERIM_DATA_DIR / 'dem_preproc_mask.tif'
+        dem_preproc_mask_path = self.out_dir / 'dem_preproc_mask.tif'
         raster_masking_tool = SAGA_ENV / 'grid_tools' / 'Grid Masking'
         output = (
             raster_masking_tool.execute(
-                grid=dem_preproc_path,
-                mask=watershed_path,
+                grid=watershed_output.flow.dem_preproc.file_name,
+                mask=watershed_output.watershed.file_name,
                 masked=dem_preproc_mask_path,
             )
             .rasters['masked']
             .path
         )
-        dem_preproc_mask = WBE_ENV.read_raster(fspath(output))
 
-        logger.info('Computing the D8 pointer for the watershed.')
-        d8_watershed_path = INTERIM_DATA_DIR / 'd8_watershed.tif'
-        d8_watershed = WBE_ENV.d8_pointer(dem_preproc_mask)
-        WBE_ENV.write_raster(d8_watershed, d8_watershed_path.as_posix())
-
-        logger.info('Computing the flow accumulation for the watershed.')
-        flow_watershed_path = INTERIM_DATA_DIR / 'flow_watershed.tif'
-        flow_watershed = WBE_ENV.d8_flow_accum(
-            d8_watershed, input_is_pointer=True, out_type='catchment area'
+        dem_preproc_mask = WBW_ENV.read_raster(fspath(output))
+        flow_watershed = self.compute_flow(dem_preproc_mask)
+        streams = WBW_ENV.extract_streams(
+            flow_watershed.flow_accumulation, streams_flow_accum_threshold
         )
-        WBE_ENV.write_raster(flow_watershed, flow_watershed_path.as_posix())
-
-        logger.info(
-            'Extracting the streams for the watershed using a flow accumulation threshold of %i.'
-            % self.streams_threshold
+        slope_gradient = WBW_ENV.stream_slope_continuous(
+            flow_watershed.d8_pointer, streams, dem_preproc_mask
         )
-        streams_path = INTERIM_DATA_DIR / 'streams.tif'
-        streams = WBE_ENV.extract_streams(
-            flow_watershed, threshold=self.streams_threshold
+        slope_gradient_output = SlopeGradientComputationOutput(
+            watershed_output, flow_watershed, streams, slope_gradient
         )
-        WBE_ENV.write_raster(streams, streams_path.as_posix())
-
-        logger.info('Converting the raster stream network to vector.')
-        streams_vector_path = INTERIM_DATA_DIR / 'streams.shp'
-        streams_vector = WBE_ENV.raster_streams_to_vector(streams, d8_watershed)
-        WBE_ENV.write_vector(streams_vector, streams_vector_path.as_posix())
-
-        logger.info('Extracting the main stream from the stream network.')
-        main_stream_path = INTERIM_DATA_DIR / 'main_stream_all_area.tif'
-        main_stream = WBE_ENV.find_main_stem(d8_watershed, streams)
-        WBE_ENV.write_raster(main_stream, main_stream_path.as_posix())
-
-        logger.info('Converting the main stream to vector.')
-        stream_path = INTERIM_DATA_DIR / 'main_stream.shp'
-        main_stream_as_vec = WBE_ENV.raster_to_vector_lines(main_stream)
-        WBE_ENV.write_vector(main_stream_as_vec, stream_path.as_posix())
-        gpd.read_file(stream_path).iloc[::-1].dissolve().normalize().to_file(
-            stream_path
+        write_whitebox_func(
+            slope_gradient_output.slope_gradient_watershed,
+            self.out_dir / 'slope_gradient.tif',
         )
-
-        logger.info(
-            'Computing the slope gradient for the stream network/main stream.'
-        )
-        slope_continuous_path = INTERIM_DATA_DIR / 'slope_continuous_path.tif'
-        slope_continuous = WBE_ENV.stream_slope_continuous(
-            d8_watershed, streams, dem_preproc_mask
-        )
-        WBE_ENV.write_raster(slope_continuous, slope_continuous_path.as_posix())
-
-        return HydrologicAnalysisOutput(
-            dem_preproc_mask,
-            main_stream_as_vec,
-            flow_watershed,
-            slope_continuous,
-        )
+        return slope_gradient_output
 
 
 if __name__ == '__main__':
     gully_number = '2'
-    dem = RAW_DATA_DIR / 'ravene' / gully_number / '5 m' / 'merged.tif'
+    # dem = RAW_DATA_DIR / 'ravene' / gully_number / '5 m' / 'merged.tif'
     outlet = RAW_DATA_DIR / 'ravene' / gully_number / 'pour_point.shp'
-    print(HydrologicAnalysis(dem, outlet).process())
+    dem = DATA_DIR / 'dem_30m.tif'
+    hydro = HydrologicAnalysis(dem, out_dir=INTERIM_DATA_DIR / gully_number)
+    watershed = hydro.compute_watershed(outlet, outlet_snap_dist=100)
+    write_whitebox(
+        WBW_ENV.raster_to_vector_polygons(watershed.watershed),
+        INTERIM_DATA_DIR / gully_number / 'watershed.shp',
+        overwrite=True,
+    )
