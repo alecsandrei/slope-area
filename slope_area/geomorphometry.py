@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import collections.abc as c
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 import logging
 import math
 from os import PathLike, fspath, makedirs
 from pathlib import Path
+import reprlib
 
 from PySAGA_cmd import Raster as SAGARaster
 from PySAGA_cmd import Vector as SAGAVector
@@ -82,29 +83,31 @@ class WatershedComputationOutput(ComputationOutput):
 @dataclass(frozen=True)
 class SlopeGradientComputationOutput(ComputationOutput):
     watershed: WatershedComputationOutput
-    flow_watershed: FlowAccumulationComputationOutput
-    streams_watershed: WhiteboxRaster
-    slope_gradient_watershed: WhiteboxRaster
+    flow: FlowAccumulationComputationOutput
+    streams: WhiteboxRaster
+    slope_grad: WhiteboxRaster
 
 
 @dataclass
 class HydrologicAnalysis:
     dem: WhiteboxRaster
     out_dir: Path
+    _logger: logging.Logger = field(init=False, repr=False)
 
     def __init__(self, dem: PathLike, out_dir: PathLike = INTERIM_DATA_DIR):
-        logger.info('Reading the DEM at %s.' % dem)
+        self._logger = logger.getChild(self.__class__.__name__)
+        self._logger.info('Reading the DEM at %s.' % dem)
         self.dem = WBW_ENV.read_raster(fspath(dem))
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(exist_ok=True)
 
     @timeit(logger, logging.DEBUG)
     def preprocess_dem(self) -> WhiteboxRaster:
-        logger.info('Breaching depressions in the DEM.')
+        self._logger.info('Breaching depressions in the DEM.')
         dem_preproc = WBW_ENV.breach_depressions_least_cost(
             dem=self.dem, fill_deps=True
         )
-        logger.info('Breaching single-cell pits.')
+        self._logger.info('Breaching single-cell pits.')
         dem_preproc = WBW_ENV.breach_single_cell_pits(dem_preproc)
         return dem_preproc
 
@@ -115,7 +118,9 @@ class HydrologicAnalysis:
         dem_preproc = (
             dem_preproc if dem_preproc is not None else self.preprocess_dem()
         )
+        self._logger.info('Computing the D8 pointer.')
         d8_pointer = WBW_ENV.d8_pointer(dem_preproc)
+        self._logger.info('Computing the flow accumulation.')
         flow = WBW_ENV.d8_flow_accum(
             d8_pointer, out_type='catchment_area', input_is_pointer=True
         )
@@ -129,27 +134,36 @@ class HydrologicAnalysis:
         dem_preproc: WhiteboxRaster | None = None,
     ) -> WatershedComputationOutput:
         if isinstance(outlet, PathLike):
+            self._logger.info('Reading the outlet %s.' % outlet)
             outlet = WBW_ENV.read_vector(fspath(outlet))
         flow_output = self.compute_flow(dem_preproc)
         if outlet_snap_dist:
+            self._logger.info(
+                'Snapping the outlet using a snap distance of %.1f'
+                % outlet_snap_dist
+            )
             outlet = WBW_ENV.snap_pour_points(
                 outlet, flow_output.flow_accumulation, outlet_snap_dist
             )
+        self._logger.info('Computing the watershed.')
         watershed = WBW_ENV.watershed(flow_output.d8_pointer, outlet)
         return WatershedComputationOutput(flow_output, outlet, watershed)
 
     @timeit(logger, logging.DEBUG)
     def compute_slope_gradient(
         self,
-        outlet: WhiteboxVector | Path,
+        outlet: WhiteboxVector | PathLike,
         streams_flow_accum_threshold: int = 100,
         outlet_snap_dist: int | None = None,
-    ):
+    ) -> SlopeGradientComputationOutput:
         write_whitebox_func = partial(
-            write_whitebox, logger=logger, overwrite=True
+            write_whitebox, logger=self._logger, overwrite=True
         )
-        if isinstance(outlet, Path):
-            outlet = WBW_ENV.read_vector(outlet.as_posix())
+        if isinstance(outlet, PathLike):
+            self._logger.info('Reading the outlet %s.' % outlet)
+            outlet = WBW_ENV.read_vector(fspath(outlet))
+
+        # ---- Computing D8 pointer and flow accumulation ----
         watershed_output = self.compute_watershed(outlet, outlet_snap_dist)
         write_whitebox_func(
             watershed_output.flow.dem_preproc,
@@ -160,7 +174,8 @@ class HydrologicAnalysis:
             self.out_dir / 'watershed.tif',
         )
 
-        logger.info('Masking the preprocessed DEM with the watershed.')
+        # ---- Using the watershed to mask the DEM ----
+        self._logger.info('Masking the preprocessed DEM with the watershed.')
         dem_preproc_mask_path = self.out_dir / 'dem_preproc_mask.tif'
         raster_masking_tool = SAGA_ENV / 'grid_tools' / 'Grid Masking'
         output = (
@@ -173,6 +188,10 @@ class HydrologicAnalysis:
             .path
         )
 
+        # ---- Computing the slope gradient for the masked DEM ----
+        self._logger.info(
+            'Computing the slope gradient for the streams in the watershed.'
+        )
         dem_preproc_mask = WBW_ENV.read_raster(fspath(output))
         flow_watershed = self.compute_flow(dem_preproc_mask)
         streams = WBW_ENV.extract_streams(
@@ -185,14 +204,15 @@ class HydrologicAnalysis:
             watershed_output, flow_watershed, streams, slope_gradient
         )
         write_whitebox_func(
-            slope_gradient_output.slope_gradient_watershed,
-            self.out_dir / 'slope_gradient.tif',
+            slope_gradient_output.slope_grad,
+            self.out_dir / 'slope_grad.tif',
         )
         return slope_gradient_output
 
 
 def compute_slope(elevation: PathLike, out_slope: PathLike) -> SAGARaster:
     tool = SAGA_ENV / 'ta_morphometry' / 'Slope, Aspect, Curvature'
+    logger.info('Computing slope for DEM %s.' % elevation)
     return tool.execute(
         verbose=True,
         elevation=elevation,
@@ -212,10 +232,15 @@ def compute_profile_from_lines(
     if dem is None:
         dem = rasters[0]
     profiles_from_lines = SAGA_ENV / 'ta_profiles' / 'Profiles from Lines'
+    rasters_str = ';'.join(fspath(raster) for raster in rasters)
+    logger.info(
+        'Computing profile for rasters %s.'
+        % ', '.join([reprlib.repr(fspath(raster)) for raster in rasters])
+    )
     return profiles_from_lines.execute(
         verbose=True,
         dem=dem,
-        values=';'.join(fspath(raster) for raster in rasters),
+        values=rasters_str,
         lines=lines,
         profile=out_profile,
         name=split_by_field,

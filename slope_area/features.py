@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from os import fspath
 import typing as t
@@ -33,11 +33,15 @@ logger = create_logger(__name__)
 @dataclass
 class DEMTiles:
     gdf: gpd.GeoDataFrame
+    _logger: logging.Logger = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._logger = logger.getChild(self.__class__.__name__)
 
     def build_vrt(self, out_vrt: PathLike) -> Path:
         out_vrt = INTERIM_DATA_DIR / 'test.vrt'
         paths = [DEM_DIR / path for path in self.gdf['path']]
-        logger.info('Building VRT from %i rasters.' % len(paths))
+        self._logger.info('Building VRT from %i rasters.' % len(paths))
         return build_vrt(out_vrt, paths)
 
     def resample[T: PathLike](
@@ -53,7 +57,7 @@ class DEMTiles:
             'src_nodata': 0.0,
             'dst_nodata': 0.0,
         }
-        logger.info('Resampling VRT %s at res=%s' % (vrt, res))
+        self._logger.info('Resampling VRT %s at res=%s' % (vrt, res))
         return resample(
             vrt, out_file, res=res, kwargs_reproject=reproject_kwargs
         )
@@ -76,13 +80,14 @@ class DEMTiles:
         stream_units_threshold: int = 5,
         basins_strahler_order: int = 5,
     ) -> t.Self:
-        logger.info('Infering DEM tiles based on the outlet.')
+        c_logger = logger.getChild(cls.__name__)
+        c_logger.info('Infering DEM tiles based on the outlet.')
         out_dir = INTERIM_DATA_DIR
 
         # ---- Read data ----
-        logger.info('Reading %s.' % dem)
+        c_logger.info('Reading %s.' % dem)
         wbw_dem = WBW_ENV.read_raster(fspath(dem))
-        logger.info('Reading %s.' % outlet)
+        c_logger.info('Reading %s.' % outlet)
         outlet_gdf = gpd.read_file(outlet)
         assert outlet_gdf.shape[0] == 1, 'Expected a single outlet'
         outlet_geom = outlet_gdf.geometry.iloc[0]
@@ -90,7 +95,9 @@ class DEMTiles:
         # ---- Extract the large basin overlapping outlet ----
         basins_file = out_dir / 'basins.shp'
         basin_file = basins_file.with_stem('basin')
-        logger.info('Extracting the large basin intersecting with the outlet.')
+        c_logger.info(
+            'Extracting the large basin intersecting with the outlet.'
+        )
         d8_pointer = WBW_ENV.d8_pointer(wbw_dem)
         basins = WBW_ENV.basins(d8_pointer)
         basins_as_vec = WBW_ENV.raster_to_vector_polygons(basins)
@@ -105,7 +112,7 @@ class DEMTiles:
         basin = WBW_ENV.read_vector(fspath(basin_file))
 
         # ---- Derive D8 pointer and flowacc from the masked DEM ----
-        logger.info(
+        c_logger.info(
             'Masking the DEM with the large basin and generating D8 and flowacc.'
         )
         dem_mask = WBW_ENV.clip_raster_to_polygon(wbw_dem, basin)
@@ -115,7 +122,7 @@ class DEMTiles:
         )
 
         # ---- Extract the subbasins based on the strahler threshold ----
-        logger.info(
+        c_logger.info(
             'Delineating basins based on the threshold strahler order of %i.'
             % basins_strahler_order
         )
@@ -142,7 +149,7 @@ class DEMTiles:
         )
 
         # ---- Extract the basin(s) overlapping the outlet ----
-        logger.info('Extracting the subbasin(s) overlapping the outlet.')
+        c_logger.info('Extracting the subbasin(s) overlapping the outlet.')
         with warnings.catch_warnings():
             # This gives RuntimeWarning about the geometry being invalid and corrected
             warnings.simplefilter('ignore')
