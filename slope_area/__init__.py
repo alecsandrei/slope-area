@@ -26,3 +26,9 @@ logger.info('Initialized Whitebox Environment')
 WBW_ENV: WbEnvironment = wbw.WbEnvironment()
 logger.info('Initialized SAGAGIS Environment')
 SAGA_ENV = PySAGA_cmd.SAGA('saga_cmd')
+
+# Data settings
+if SAGA_ENV.version is None or SAGA_ENV.version.major <= 8:
+    SAGA_RASTER_SUFFIX = '.sdat'
+else:
+    SAGA_RASTER_SUFFIX = '.tif'
