@@ -4,7 +4,7 @@
   "formatters": {
     "colored": {
       "()": "slope_area.ColoredFormatter",
-      "fmt": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+      "fmt": "%(asctime)s %(levelname)s %(name)s %(funcName)20s(): %(message)s",
       "datefmt": "%H:%M:%S"
     },
     "json": {
