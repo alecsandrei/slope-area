@@ -66,8 +66,13 @@ class DEMTiles:
     def from_polygon(
         cls, polygon: shapely.Polygon | shapely.MultiPolygon
     ) -> t.Self:
+        c_logger = logger.getChild(cls.__name__)
         dem_tiles = gpd.read_file(DEM_TILES)
         subset = dem_tiles[dem_tiles.intersects(polygon)]
+        c_logger.info(
+            'Extracted %i tiles based on the polygon %r'
+            % (subset.shape[0], polygon)
+        )
         return cls(subset)
 
     @classmethod
