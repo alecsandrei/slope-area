@@ -49,7 +49,7 @@ class DEMTiles:
     ) -> T:
         crs = self.gdf.crs.to_wkt()
         rio_crs = CRS.from_string(crs)
-        # NOTE: nodata=0 might be buggy e.g. when 0 is in DEM
+        # NOTE: nodata=0 might be buggy e.g. when 0 is values are present in DEM
         reproject_kwargs = {
             'src_crs': rio_crs,
             'dst_crs': rio_crs,
