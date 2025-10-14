@@ -4,7 +4,6 @@ import collections.abc as c
 from dataclasses import dataclass, field
 from functools import partial
 import logging
-import math
 from os import PathLike, fspath, makedirs
 from pathlib import Path
 import reprlib
@@ -197,8 +196,10 @@ class HydrologicAnalysis:
         streams = WBW_ENV.extract_streams(
             flow_watershed.flow_accumulation, streams_flow_accum_threshold
         )
-        slope_gradient = WBW_ENV.stream_slope_continuous(
-            flow_watershed.d8_pointer, streams, dem_preproc_mask
+        slope_gradient = degree_to_percent(
+            WBW_ENV.stream_slope_continuous(
+                flow_watershed.d8_pointer, streams, dem_preproc_mask
+            )
         )
         slope_gradient_output = SlopeGradientComputationOutput(
             watershed_output, flow_watershed, streams, slope_gradient
@@ -247,8 +248,9 @@ def compute_profile_from_lines(
     ).vectors['profile']
 
 
-def degree_to_percent(degree: float) -> float:
-    return math.tan(math.radians(degree)) * 100
+def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
+    return raster.to_radians().tan() * 100
+    # return math.tan(math.radians(degree)) * 100
 
 
 if __name__ == '__main__':
