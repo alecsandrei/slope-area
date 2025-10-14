@@ -250,7 +250,6 @@ def compute_profile_from_lines(
 
 def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
     return raster.to_radians().tan() * 100
-    # return math.tan(math.radians(degree)) * 100
 
 
 if __name__ == '__main__':
