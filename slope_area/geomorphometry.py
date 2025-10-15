@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import collections.abc as c
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import partial
 import logging
 from os import PathLike, fspath, makedirs
 from pathlib import Path
 import reprlib
+import typing as t
 
 from PySAGA_cmd import Raster as SAGARaster
 from PySAGA_cmd import Vector as SAGAVector
@@ -16,6 +18,8 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 from slope_area import SAGA_ENV, WBW_ENV
 from slope_area.config import (
     DATA_DIR,
+    DEM_30M,
+    DEM_90M,
     INTERIM_DATA_DIR,
     RAW_DATA_DIR,
 )
@@ -93,10 +97,16 @@ class HydrologicAnalysis:
     out_dir: Path
     _logger: logging.Logger = field(init=False, repr=False)
 
-    def __init__(self, dem: PathLike, out_dir: PathLike = INTERIM_DATA_DIR):
+    def __init__(
+        self,
+        dem: PathLike | WhiteboxRaster,
+        out_dir: PathLike = INTERIM_DATA_DIR,
+    ):
         self._logger = logger.getChild(self.__class__.__name__)
-        self._logger.info('Reading the DEM at %s.' % dem)
-        self.dem = WBW_ENV.read_raster(fspath(dem))
+        if not isinstance(dem, WhiteboxRaster):
+            self._logger.info('Reading the DEM at %s.' % dem)
+            dem = WBW_ENV.read_raster(fspath(dem))
+        self.dem = dem
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(exist_ok=True)
 
@@ -205,6 +215,10 @@ class HydrologicAnalysis:
             watershed_output, flow_watershed, streams, slope_gradient
         )
         write_whitebox_func(
+            slope_gradient_output.flow.flow_accumulation,
+            self.out_dir / 'flowacc.tif',
+        )
+        write_whitebox_func(
             slope_gradient_output.slope_grad,
             self.out_dir / 'slope_grad.tif',
         )
@@ -224,10 +238,10 @@ def compute_slope(elevation: PathLike, out_slope: PathLike) -> SAGARaster:
 
 
 def compute_profile_from_lines(
-    rasters: c.Sequence[PathLike],
-    lines: PathLike,
+    rasters: c.Sequence[PathLike | str],
+    lines: PathLike | str,
     out_profile: PathLike,
-    dem: PathLike | None = None,
+    dem: PathLike | str | None = None,
     split_by_field: str = 'FID',
 ) -> SAGAVector:
     if dem is None:
@@ -250,6 +264,76 @@ def compute_profile_from_lines(
 
 def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
     return raster.to_radians().tan() * 100
+
+
+class InterimData(Enum):
+    DEM_30M_PREPROC = INTERIM_DATA_DIR / '30m_dem_preproc.tif'
+    DEM_30M_D8_POINTER = INTERIM_DATA_DIR / '30m_d8_pointer.tif'
+    DEM_30M_FLOW_ACCUM = INTERIM_DATA_DIR / '30m_flow_accumulation.tif'
+    DEM_90M_PREPROC = INTERIM_DATA_DIR / '90m_dem_preproc.tif'
+    DEM_90M_D8_POINTER = INTERIM_DATA_DIR / '90m_d8_pointer.tif'
+    DEM_90M_FLOW_ACCUM = INTERIM_DATA_DIR / '90m_flow_accumulation.tif'
+
+    def _get_dem_preproc(self, dem: Path) -> WhiteboxRaster:
+        c_logger = logger.getChild(self.__class__.__name__)
+        dem_preproc = HydrologicAnalysis(dem, INTERIM_DATA_DIR).preprocess_dem()
+        write_whitebox(
+            dem_preproc, self.value, overwrite=False, logger=c_logger
+        )
+        return dem_preproc
+
+    def _get_flow_output(
+        self, dem_preproc: WhiteboxRaster, prefix: str
+    ) -> FlowAccumulationComputationOutput:
+        c_logger = logger.getChild(self.__class__.__name__)
+        hydro_analysis = HydrologicAnalysis(
+            dem_preproc, out_dir=INTERIM_DATA_DIR
+        )
+        output = hydro_analysis.compute_flow(hydro_analysis.dem)
+        output.write_whitebox(
+            self.value.parent, prefix=prefix, overwrite=False, logger=c_logger
+        )
+        return output
+
+    @t.overload
+    def _get(self, *, as_whitebox: t.Literal[True]) -> WhiteboxRaster: ...
+    @t.overload
+    def _get(self, *, as_whitebox: t.Literal[False] = False) -> Path: ...
+    def _get(self, *, as_whitebox: bool = False) -> Path | WhiteboxRaster:
+        c_logger = logger.getChild(self.__class__.__name__)
+        if self.value.exists():
+            if as_whitebox:
+                c_logger.info('Reading DEM at %s.' % self.value)
+                return WBW_ENV.read_raster(fspath(self.value))
+            return self.value
+        match self:
+            case InterimData.DEM_30M_PREPROC:
+                ret = self._get_dem_preproc(DEM_30M)
+            case InterimData.DEM_30M_D8_POINTER:
+                ret = self._get_flow_output(
+                    InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
+                    '30m_',
+                ).d8_pointer
+            case InterimData.DEM_30M_FLOW_ACCUM:
+                ret = self._get_flow_output(
+                    InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
+                    '30m_',
+                ).flow_accumulation
+            case InterimData.DEM_90M_PREPROC:
+                ret = self._get_dem_preproc(DEM_90M)
+            case InterimData.DEM_90M_D8_POINTER:
+                ret = self._get_flow_output(
+                    InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
+                    '90m_',
+                ).d8_pointer
+            case InterimData.DEM_90M_FLOW_ACCUM:
+                ret = self._get_flow_output(
+                    InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
+                    '90m_',
+                ).flow_accumulation
+        if not as_whitebox:
+            return Path(ret.file_name)
+        return ret
 
 
 if __name__ == '__main__':

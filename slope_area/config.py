@@ -12,3 +12,7 @@ INTERIM_DATA_DIR = DATA_DIR / 'interim'
 # Raw data files
 DEM_DIR = RAW_DATA_DIR / 'DEM'
 DEM_TILES = RAW_DATA_DIR / 'dem_tiles.fgb'
+
+
+DEM_90M = RAW_DATA_DIR / 'dem_90m.tif'
+DEM_30M = RAW_DATA_DIR / 'dem_30m.tif'
