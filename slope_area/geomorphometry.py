@@ -17,11 +17,9 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import SAGA_ENV, WBW_ENV
 from slope_area.config import (
-    DATA_DIR,
     DEM_30M,
     DEM_90M,
     INTERIM_DATA_DIR,
-    RAW_DATA_DIR,
 )
 from slope_area.logger import create_logger
 from slope_area.utils import timeit, write_whitebox
@@ -334,17 +332,3 @@ class InterimData(Enum):
         if not as_whitebox:
             return Path(ret.file_name)
         return ret
-
-
-if __name__ == '__main__':
-    gully_number = '2'
-    # dem = RAW_DATA_DIR / 'ravene' / gully_number / '5 m' / 'merged.tif'
-    outlet = RAW_DATA_DIR / 'ravene' / gully_number / 'pour_point.shp'
-    dem = DATA_DIR / 'dem_30m.tif'
-    hydro = HydrologicAnalysis(dem, out_dir=INTERIM_DATA_DIR / gully_number)
-    watershed = hydro.compute_watershed(outlet, outlet_snap_dist=100)
-    write_whitebox(
-        WBW_ENV.raster_to_vector_polygons(watershed.watershed),
-        INTERIM_DATA_DIR / gully_number / 'watershed.shp',
-        overwrite=True,
-    )
