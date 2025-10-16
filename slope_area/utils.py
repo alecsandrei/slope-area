@@ -14,16 +14,19 @@ from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import WBW_ENV
+from slope_area._typing import Resolution
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
     from os import PathLike
 
+logger = create_logger(__name__)
+
 
 def resample[T: PathLike](
     path: PathLike,
     dest: T,
-    res: tuple[float, float],
+    res: Resolution,
     kwargs_reproject: dict[str, t.Any] | None = None,
 ) -> T:
     if kwargs_reproject is None:

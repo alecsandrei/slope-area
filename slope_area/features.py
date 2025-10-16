@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import UserList
+import collections.abc as c
 from dataclasses import dataclass, field
 from enum import Enum, auto
 import logging
@@ -9,27 +11,39 @@ import typing as t
 import warnings
 
 import geopandas as gpd
+from geopandas import gpd
+import pyproj
 from rasterio import CRS
 from rasterio.warp import Resampling
 from rio_vrt import build_vrt
 import shapely
+from whitebox_workflows import (
+    AttributeField,
+    FieldData,
+    FieldDataType,
+    Point2D,
+    VectorGeometry,
+    VectorGeometryType,
+)
+from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import WBW_ENV
+from slope_area._typing import Resolution
 from slope_area.config import (
-    DATA_DIR,
     DEM_DIR,
     DEM_TILES,
-    INTERIM_DATA_DIR,
-    RAW_DATA_DIR,
 )
-from slope_area.geomorphometry import (
-    InterimData,
-)
+from slope_area.geomorphometry import InterimData
 from slope_area.logger import create_logger
-from slope_area.utils import resample, timeit, write_whitebox
+from slope_area.utils import (
+    resample,
+    timeit,
+    write_whitebox,
+)
 
 if t.TYPE_CHECKING:
     from os import PathLike
+
 
 logger = create_logger(__name__)
 
@@ -40,6 +54,31 @@ class DEMTilesInferenceMethod(Enum):
 
 
 @dataclass
+class VRT:
+    path: Path
+    dem_tiles: DEMTiles
+    _logger: logging.Logger = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._logger = logger.getChild(self.__class__.__name__)
+
+    def resample[T: PathLike](self, out_file: T, res: Resolution) -> T:
+        crs = self.dem_tiles.gdf.crs.to_wkt()
+        rio_crs = CRS.from_string(crs)
+        reproject_kwargs = {
+            'src_crs': rio_crs,
+            'dst_crs': rio_crs,
+            'resampling': Resampling.bilinear,
+            'src_nodata': 0.0,
+            'dst_nodata': -32767,
+        }
+        self._logger.info('Resampling VRT %s at res=%s' % (self.path, res))
+        return resample(
+            self.path, out_file, res=res, kwargs_reproject=reproject_kwargs
+        )
+
+
+@dataclass
 class DEMTiles:
     gdf: gpd.GeoDataFrame
     _logger: logging.Logger = field(init=False, repr=False)
@@ -47,28 +86,10 @@ class DEMTiles:
     def __post_init__(self):
         self._logger = logger.getChild(self.__class__.__name__)
 
-    def build_vrt(self, out_vrt: PathLike) -> Path:
+    def build_vrt(self, out_vrt: PathLike) -> VRT:
         paths = [DEM_DIR / path for path in self.gdf['path']]
         self._logger.info('Building VRT from %i rasters.' % len(paths))
-        return build_vrt(out_vrt, paths)
-
-    def resample[T: PathLike](
-        self, vrt: PathLike, out_file: T, res: tuple[float, float]
-    ) -> T:
-        crs = self.gdf.crs.to_wkt()
-        rio_crs = CRS.from_string(crs)
-        # NOTE: nodata=0 might be buggy e.g. when 0 is values are present in DEM
-        reproject_kwargs = {
-            'src_crs': rio_crs,
-            'dst_crs': rio_crs,
-            'resampling': Resampling.bilinear,
-            'src_nodata': 0.0,
-            'dst_nodata': 0.0,
-        }
-        self._logger.info('Resampling VRT %s at res=%s' % (vrt, res))
-        return resample(
-            vrt, out_file, res=res, kwargs_reproject=reproject_kwargs
-        )
+        return VRT(build_vrt(out_vrt, paths), self)
 
     @classmethod
     def from_polygon(
@@ -87,7 +108,7 @@ class DEMTiles:
     @classmethod
     def from_outlet(
         cls,
-        outlet: PathLike,
+        outlet: Outlet,
         out_dir: PathLike,
         method: t.Literal[
             DEMTilesInferenceMethod.STRAHLER_BASINS
@@ -100,7 +121,7 @@ class DEMTiles:
     @classmethod
     def from_outlet(
         cls,
-        outlet: PathLike,
+        outlet: Outlet,
         out_dir: PathLike,
         method: t.Literal[
             DEMTilesInferenceMethod.WATERSHED
@@ -111,7 +132,7 @@ class DEMTiles:
     @timeit(logger, level=logging.INFO)
     def from_outlet(
         cls,
-        outlet: PathLike,
+        outlet: Outlet,
         out_dir: PathLike,
         method: DEMTilesInferenceMethod = DEMTilesInferenceMethod.WATERSHED,
         outlet_snap_dist: int = 100,
@@ -138,26 +159,27 @@ class DEMTiles:
     @timeit(logger, level=logging.INFO)
     def _from_outlet_watershed(
         cls,
-        outlet: PathLike,
+        outlet: Outlet,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
     ) -> t.Self:
         c_logger = logger.getChild(cls.__name__)
         c_logger.info('Infering DEM tiles based on the outlet.')
         out_dir = Path(out_dir)
+        out_dir.mkdir(exist_ok=True)
 
         ## ---- Read data ----
         d8_pointer = InterimData.DEM_30M_D8_POINTER._get(as_whitebox=True)
         flow_accum = InterimData.DEM_30M_FLOW_ACCUM._get(as_whitebox=True)
+        wbw_outlet = Outlets([outlet], crs=outlet.crs).to_whitebox_vector()
 
         # ---- Computing watershed ----
-        c_logger.info('Reading outlet %s.' % outlet)
-        wbw_outlet = WBW_ENV.snap_pour_points(
-            WBW_ENV.read_vector(fspath(outlet)),
+        wbw_outlet_snapped = WBW_ENV.snap_pour_points(
+            wbw_outlet,
             flow_accum=flow_accum,
             snap_dist=outlet_snap_dist,
         )
-        watershed = WBW_ENV.watershed(d8_pointer, wbw_outlet)
+        watershed = WBW_ENV.watershed(d8_pointer, wbw_outlet_snapped)
         watershed_vec = WBW_ENV.raster_to_vector_polygons(watershed)
         write_whitebox(
             watershed_vec,
@@ -174,7 +196,7 @@ class DEMTiles:
     @timeit(logger, level=logging.INFO)
     def _from_outlet_strahler_basins(
         cls,
-        outlet: PathLike,
+        outlet: Outlet,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
         stream_units_threshold: int = 5,
@@ -187,9 +209,14 @@ class DEMTiles:
         # ---- Read data ----
         dem = InterimData.DEM_30M_PREPROC._get(as_whitebox=True)
         d8_pointer = InterimData.DEM_30M_D8_POINTER._get(as_whitebox=True)
-        outlet_gdf = gpd.read_file(outlet)
-        assert outlet_gdf.shape[0] == 1, 'Expected a single outlet'
-        outlet_geom = outlet_gdf.geometry.iloc[0]
+
+        # ---- CRS check ----
+        for raster in (dem, d8_pointer):
+            if pyproj.CRS.from_string(raster.configs.projection) != outlet.crs:
+                logger.error(
+                    'CRS of outlet and raster %s do not match.'
+                    % raster.file_name
+                )
 
         # ---- Extract the large basin overlapping outlet ----
         basins_file = out_dir / 'basins.shp'
@@ -204,7 +231,7 @@ class DEMTiles:
             # This gives RuntimeWarning about the geometry being invalid and corrected
             warnings.simplefilter('ignore')
             basins_gdf = gpd.read_file(basins_file)
-        basins_gdf[basins_gdf.intersects(outlet_geom)].make_valid().to_file(
+        basins_gdf[basins_gdf.intersects(outlet.geom)].make_valid().to_file(
             basin_file
         )
         basin = WBW_ENV.read_vector(fspath(basin_file))
@@ -254,20 +281,77 @@ class DEMTiles:
             basins_strahler_gdf = gpd.read_file(basins_strahler_as_vec_file)
         basin_strahler: shapely.Polygon | shapely.MultiPolygon = (
             basins_strahler_gdf[
-                basins_strahler_gdf.intersects(outlet_geom)
+                basins_strahler_gdf.intersects(outlet.geom)
             ].union_all()
         )
 
         return cls.from_polygon(basin_strahler)
 
 
-if __name__ == '__main__':
-    gully_number = '2'
-    outlet = RAW_DATA_DIR / 'ravene' / gully_number / 'pour_point.shp'
-    dem = DATA_DIR / 'dem_90m_breached.tif'
-    demtiles = DEMTiles.from_outlet(outlet, dem)
-    demtiles.resample(
-        demtiles.build_vrt(INTERIM_DATA_DIR / 'dem.vrt'),
-        out_file=INTERIM_DATA_DIR / 'dem_resampled.tif',
-        res=(5, 5),
-    )
+@dataclass(frozen=True)
+class Outlet:
+    geom: shapely.Point
+    crs: pyproj.CRS
+    name: str | None = None
+
+
+@dataclass
+class Outlets(UserList[Outlet]):
+    def __init__(
+        self, data: c.Iterable[Outlet] | None = None, *, crs: pyproj.CRS
+    ):
+        super().__init__(data)
+        self.crs = crs
+
+    @classmethod
+    def from_gdf(
+        cls, gdf: gpd.GeoDataFrame, name_field: str | None = None
+    ) -> t.Self:
+        if gdf.empty:
+            raise ValueError('GeoDataFrame is empty — cannot create Outlets.')
+        if not all(isinstance(geom, shapely.Point) for geom in gdf.geometry):
+            raise TypeError('All geometries must be Points.')
+
+        crs = pyproj.CRS.from_user_input(gdf.crs)
+        outlets = [
+            Outlet(
+                geom=row.geometry,
+                crs=crs,
+                name=(row[name_field] if name_field else None),
+            )
+            for _, row in gdf.iterrows()
+        ]
+        return cls(outlets, crs=crs)
+
+    def to_whitebox_vector(self) -> WhiteboxVector:
+        vector = WBW_ENV.new_vector(
+            VectorGeometryType.Point,
+            [
+                AttributeField(  # type: ignore
+                    name='name',
+                    field_type=FieldDataType.Text,
+                    field_length=50,
+                    decimal_count=0,
+                )
+            ],
+            self.crs.to_wkt(),
+        )
+        for outlet in self.data:
+            geometry = VectorGeometry.new_vector_geometry(
+                VectorGeometryType.Point
+            )
+            if hasattr(Point2D, 'new'):
+                point = Point2D.new(outlet.geom.x, outlet.geom.y)
+            else:
+                point = Point2D(outlet.geom.x, outlet.geom.y)  # type: ignore
+            geometry.add_point(point)
+            vector.add_record(geometry)
+            vector.add_attribute_record(
+                rec=[
+                    FieldData.new_text(outlet.name)
+                    if outlet.name is not None
+                    else FieldData.new_null()
+                ],
+                deleted=False,
+            )
+        return vector

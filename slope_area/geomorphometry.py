@@ -303,7 +303,7 @@ class InterimData(Enum):
         c_logger = logger.getChild(self.__class__.__name__)
         if self.value.exists():
             if as_whitebox:
-                c_logger.info('Reading DEM at %s.' % self.value)
+                c_logger.info('Reading file at %s.' % self.value)
                 return WBW_ENV.read_raster(fspath(self.value))
             return self.value
         match self:
