@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import collections.abc as c
 import datetime as dt
 import json
 import logging
 import logging.config
+import logging.handlers
+import multiprocessing
 import sys
+import threading
+import traceback
 import typing as t
 
 from slope_area.config import LOGGING_CONFIG, PROJ_ROOT
@@ -137,9 +142,66 @@ class ErrorFilter(logging.Filter):
         return record.levelno >= logging.WARNING
 
 
+class RichDictHandler(logging.Handler):
+    def __init__(self, logs: dict[str, str]):
+        super().__init__()
+        self.logs = logs
+        self.setFormatter(ColoredFormatter(fmt='[%(levelname)s] %(message)s'))
+        self.setLevel(logging.DEBUG)
+
+    def emit(self, record: logging.LogRecord):
+        msg = self.format(record)
+        trial_name = getattr(record, 'trialName', None)
+        assert trial_name is not None
+        self.logs[trial_name] = msg
+
+
+class MultiprocessingLog(logging.Handler):
+    """Mostly based on https://stackoverflow.com/a/894284"""
+
+    def __init__(self, handlers: c.Sequence[logging.Handler] | None = None):
+        super().__init__()
+
+        if handlers is None:
+            handler = logging.getHandlerByName('slopeAreaFile')
+            assert handler is not None
+            handlers = [handler]
+        self.handlers = handlers
+        self.queue: multiprocessing.Queue[logging.LogRecord] = (
+            multiprocessing.Queue(-1)
+        )
+        t = threading.Thread(target=self.receive)
+        t.daemon = True
+        t.start()
+
+    def receive(self):
+        while True:
+            try:
+                record = self.queue.get()
+                for handler in self.handlers:
+                    handler.emit(record)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except EOFError:
+                break
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+
+    def send(self, s: logging.LogRecord):
+        self.queue.put_nowait(s)
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            self.send(record)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging():
-    with LOGGING_CONFIG.open() as f_in:
-        config = json.load(f_in)
+    with LOGGING_CONFIG.open() as file:
+        config = json.load(file)
     config['handlers']['slopeAreaFile']['filename'] = (
         PROJ_ROOT / config['handlers']['slopeAreaFile']['filename']
     ).as_posix()

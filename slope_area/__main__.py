@@ -8,14 +8,18 @@ from slope_area.config import (
     RAW_DATA_DIR,
 )
 from slope_area.features import Outlets
+from slope_area.logger import create_logger
+
+logger = create_logger(__name__)
 
 
 def main():
     outlet_name = 'gully 2'
-    resolutions = [(res, res) for res in range(1, 11)]
-    outlets = Outlets.from_gdf(
-        gpd.read_file(RAW_DATA_DIR / 'outlets.shp'), name_field='name'
-    )
+    resolutions = [(res, res) for res in range(5, 11)]
+    outlets_path = RAW_DATA_DIR / 'outlets.shp'
+    logger.info('Reading outlets at %s.' % outlets_path)
+    gdf = gpd.read_file(outlets_path)
+    outlets = Outlets.from_gdf(gdf, name_field='name')
     outlet = [outlet for outlet in outlets if outlet.name == outlet_name]
     ResolutionPlotBuilder(
         outlet[0],

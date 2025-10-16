@@ -24,6 +24,8 @@ logger = create_logger(__name__)
 
 logger.info('Initialized Whitebox Environment')
 WBW_ENV: WbEnvironment = wbw.WbEnvironment()
+WBW_ENV.verbose = False
+
 logger.info('Initialized SAGAGIS Environment')
 SAGA_ENV = PySAGA_cmd.SAGA('saga_cmd')
 

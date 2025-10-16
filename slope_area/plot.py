@@ -10,8 +10,12 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from slope_area.logger import create_logger
+
 if t.TYPE_CHECKING:
     from slope_area.builder import TrialResult
+
+logger = create_logger(__name__)
 
 
 def slope_area_plot(
@@ -69,9 +73,8 @@ def slope_area_plot(
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
-def slope_area_grid(
-    data: pd.DataFrame, plot_name: str, col: str, out_fig: Path
-):
+def slope_area_grid(data: pd.DataFrame, col: str, out_fig: Path):
+    logger.info('Creating slope area plot.')
     g = sns.FacetGrid(
         data,
         hue='slope_type',
@@ -86,6 +89,7 @@ def slope_area_grid(
     g.axes.flat[0].legend(fontsize=16, loc='lower left')
     plt.tight_layout(pad=2)
     plt.savefig(out_fig, dpi=300)
+    logger.info('Saved slope area plot at %s.' % out_fig)
     plt.close()
 
 
@@ -108,7 +112,7 @@ def preprocess_trial_result(trial_result: TrialResult):
     df['values'] = slope_inv
     df = df.rename(columns={'values': 'slope'})
     df['resolution'] = str(trial_result.resolution)
-    df['name'] = trial_result.name
+    df['trial_name'] = trial_result.name
     return df
 
 

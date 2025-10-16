@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from functools import partial, wraps
 import logging
-from os import fspath
+import os
 from pathlib import Path
+import sys
 import time
 import typing as t
 
@@ -79,7 +81,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     logger: logging.Logger | None = None,
     overwrite: bool = False,
 ) -> T:
-    out_file_str = fspath(out_file)
+    out_file_str = os.fspath(out_file)
     if logger is None:
         logger = create_logger(__name__)
     if isinstance(output, WhiteboxRaster):
@@ -135,3 +137,25 @@ def timeit(logger: logging.Logger | None = None, level: int = logging.INFO):
         return wrapper
 
     return decorator
+
+
+@contextmanager
+def suppress_stdout_stderr():
+    # Save original file descriptors
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+    old_stdout = os.dup(stdout_fd)
+    old_stderr = os.dup(stderr_fd)
+
+    # Redirect to /dev/null
+    with open(os.devnull, 'w') as fnull:
+        os.dup2(fnull.fileno(), stdout_fd)
+        os.dup2(fnull.fileno(), stderr_fd)
+        try:
+            yield
+        finally:
+            # Restore original stdout/stderr
+            os.dup2(old_stdout, stdout_fd)
+            os.dup2(old_stderr, stderr_fd)
+            os.close(old_stdout)
+            os.close(old_stderr)

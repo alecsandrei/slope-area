@@ -22,7 +22,11 @@ from slope_area.config import (
     INTERIM_DATA_DIR,
 )
 from slope_area.logger import create_logger
-from slope_area.utils import timeit, write_whitebox
+from slope_area.utils import (
+    suppress_stdout_stderr,
+    timeit,
+    write_whitebox,
+)
 
 logger = create_logger(__name__)
 
@@ -128,9 +132,10 @@ class HydrologicAnalysis:
         self._logger.info('Computing the D8 pointer.')
         d8_pointer = WBW_ENV.d8_pointer(dem_preproc)
         self._logger.info('Computing the flow accumulation.')
-        flow = WBW_ENV.d8_flow_accum(
-            d8_pointer, out_type='catchment_area', input_is_pointer=True
-        )
+        with suppress_stdout_stderr():
+            flow = WBW_ENV.d8_flow_accum(
+                d8_pointer, out_type='catchment_area', input_is_pointer=True
+            )
         return FlowAccumulationComputationOutput(dem_preproc, d8_pointer, flow)
 
     @timeit(logger, logging.DEBUG)
@@ -227,7 +232,7 @@ def compute_slope(elevation: PathLike, out_slope: PathLike) -> SAGARaster:
     tool = SAGA_ENV / 'ta_morphometry' / 'Slope, Aspect, Curvature'
     logger.info('Computing slope for DEM %s.' % elevation)
     return tool.execute(
-        verbose=True,
+        verbose=False,
         elevation=elevation,
         slope=out_slope,
         unit_slope=2,  # Percent rise
@@ -251,7 +256,7 @@ def compute_profile_from_lines(
         % ', '.join([reprlib.repr(fspath(raster)) for raster in rasters])
     )
     return profiles_from_lines.execute(
-        verbose=True,
+        verbose=False,
         dem=dem,
         values=rasters_str,
         lines=lines,
@@ -265,31 +270,35 @@ def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
 
 
 class InterimData(Enum):
-    DEM_30M_PREPROC = INTERIM_DATA_DIR / '30m_dem_preproc.tif'
-    DEM_30M_D8_POINTER = INTERIM_DATA_DIR / '30m_d8_pointer.tif'
-    DEM_30M_FLOW_ACCUM = INTERIM_DATA_DIR / '30m_flow_accumulation.tif'
-    DEM_90M_PREPROC = INTERIM_DATA_DIR / '90m_dem_preproc.tif'
-    DEM_90M_D8_POINTER = INTERIM_DATA_DIR / '90m_d8_pointer.tif'
-    DEM_90M_FLOW_ACCUM = INTERIM_DATA_DIR / '90m_flow_accumulation.tif'
+    DEM_30M_PREPROC = INTERIM_DATA_DIR / '30m' / 'dem_preproc.tif'
+    DEM_30M_D8_POINTER = INTERIM_DATA_DIR / '30m' / 'd8_pointer.tif'
+    DEM_30M_FLOW_ACCUM = INTERIM_DATA_DIR / '30m' / 'flow_accumulation.tif'
+    DEM_90M_PREPROC = INTERIM_DATA_DIR / '90m' / 'dem_preproc.tif'
+    DEM_90M_D8_POINTER = INTERIM_DATA_DIR / '90m' / 'd8_pointer.tif'
+    DEM_90M_FLOW_ACCUM = INTERIM_DATA_DIR / '90m' / 'flow_accumulation.tif'
 
     def _get_dem_preproc(self, dem: Path) -> WhiteboxRaster:
+        self.value.parent.mkdir(exist_ok=True)
         c_logger = logger.getChild(self.__class__.__name__)
-        dem_preproc = HydrologicAnalysis(dem, INTERIM_DATA_DIR).preprocess_dem()
+        dem_preproc = HydrologicAnalysis(
+            dem, self.value.parent
+        ).preprocess_dem()
         write_whitebox(
             dem_preproc, self.value, overwrite=False, logger=c_logger
         )
         return dem_preproc
 
     def _get_flow_output(
-        self, dem_preproc: WhiteboxRaster, prefix: str
+        self, dem_preproc: WhiteboxRaster
     ) -> FlowAccumulationComputationOutput:
+        self.value.parent.mkdir(exist_ok=True)
         c_logger = logger.getChild(self.__class__.__name__)
         hydro_analysis = HydrologicAnalysis(
-            dem_preproc, out_dir=INTERIM_DATA_DIR
+            dem_preproc, out_dir=self.value.parent
         )
         output = hydro_analysis.compute_flow(hydro_analysis.dem)
         output.write_whitebox(
-            self.value.parent, prefix=prefix, overwrite=False, logger=c_logger
+            self.value.parent, overwrite=False, logger=c_logger
         )
         return output
 
@@ -310,24 +319,20 @@ class InterimData(Enum):
             case InterimData.DEM_30M_D8_POINTER:
                 ret = self._get_flow_output(
                     InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
-                    '30m_',
                 ).d8_pointer
             case InterimData.DEM_30M_FLOW_ACCUM:
                 ret = self._get_flow_output(
                     InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
-                    '30m_',
                 ).flow_accumulation
             case InterimData.DEM_90M_PREPROC:
                 ret = self._get_dem_preproc(DEM_90M)
             case InterimData.DEM_90M_D8_POINTER:
                 ret = self._get_flow_output(
                     InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
-                    '90m_',
                 ).d8_pointer
             case InterimData.DEM_90M_FLOW_ACCUM:
                 ret = self._get_flow_output(
                     InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
-                    '90m_',
                 ).flow_accumulation
         if not as_whitebox:
             return Path(ret.file_name)
