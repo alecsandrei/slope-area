@@ -8,9 +8,9 @@ Tool that can be used to generate slope-area plots and other analysis.
 
 ## Project Organization
 
-```
+```text
 ├── LICENSE            <- Open-source license if one is chosen
-├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
+├── Makefile           <- Makefile
 ├── README.md          <- The top-level README for developers using this project.
 ├── data
 │   ├── external       <- Data from third party sources.
@@ -18,13 +18,13 @@ Tool that can be used to generate slope-area plots and other analysis.
 │   ├── processed      <- The final, canonical data sets for modeling.
 │   └── raw            <- The original, immutable data dump.
 │
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details
-│
-├── models             <- Trained and serialized models, model predictions, or model summaries
+├── docs               <- A default mkdocs project; see www.mkdocs.org for details.
+├── logging
+│   └── config.json    <- Python logging module configurations.
 │
 ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
+│                         the creator's initials, and a short `-` delimited description,
+│                         e.g. `1.0-jqp-initial-data-exploration`.
 │
 ├── pyproject.toml     <- Project configuration file with package metadata for 
 │                         slope_area and configuration for tools like black
@@ -34,13 +34,7 @@ Tool that can be used to generate slope-area plots and other analysis.
 ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
 │   └── figures        <- Generated graphics and figures to be used in reporting
 │
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
-│
-├── setup.cfg          <- Configuration file for flake8
-│
 └── slope_area   <- Source code for use in this project.
 ```
 
 --------
-
