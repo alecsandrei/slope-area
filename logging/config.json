@@ -17,7 +17,9 @@
         "module": "module",
         "function": "funcName",
         "line": "lineno",
-        "thread_name": "threadName"
+        "thread_name": "threadName",
+        "process": "process",
+        "process_name": "processName"
       }
     }
   },
