@@ -22,6 +22,8 @@ from slope_area.logger import create_logger
 if t.TYPE_CHECKING:
     from os import PathLike
 
+    from whitebox_workflows.whitebox_workflows import WbEnvironment
+
 logger = create_logger(__name__)
 
 
@@ -80,14 +82,15 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     *,
     logger: logging.Logger | None = None,
     overwrite: bool = False,
+    wbw_env: WbEnvironment = WBW_ENV,
 ) -> T:
     out_file_str = os.fspath(out_file)
     if logger is None:
         logger = create_logger(__name__)
     if isinstance(output, WhiteboxRaster):
-        write_func = partial(WBW_ENV.write_raster, output, out_file_str)
+        write_func = partial(wbw_env.write_raster, output, out_file_str)
     elif isinstance(output, WhiteboxVector):
-        write_func = partial(WBW_ENV.write_vector, output, out_file_str)
+        write_func = partial(wbw_env.write_vector, output, out_file_str)
 
     if output.file_mode == 'r':
         logger.debug(

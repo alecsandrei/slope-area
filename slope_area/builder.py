@@ -6,20 +6,22 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 import logging
+from os import fspath
 from pathlib import Path
 import time
 
 from geopandas import gpd
 import pandas as pd
 from PySAGA_cmd import Raster as SAGARaster
-from PySAGA_cmd import Vector as SAGAVector
 from rich import box
 from rich.live import Live
 from rich.table import Table
+from whitebox_workflows import WbEnvironment
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area import SAGA_RASTER_SUFFIX, WBW_ENV
+from slope_area import SAGA_RASTER_SUFFIX, get_wbw_env
 from slope_area._typing import Resolution
+from slope_area.config import WORKERS
 from slope_area.features import (
     VRT,
     DEMTiles,
@@ -30,7 +32,6 @@ from slope_area.features import (
 from slope_area.geomorphometry import (
     HydrologicAnalysis,
     SlopeGradientComputationOutput,
-    compute_profile_from_lines,
     compute_slope,
 )
 from slope_area.logger import (
@@ -115,7 +116,9 @@ class ResolutionPlotBuilder:
                 redirect_stderr=False,
                 redirect_stdout=False,
             ) as live:
-                with concurrent.futures.ProcessPoolExecutor() as executor:
+                with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=WORKERS
+                ) as executor:
                     futures = [
                         executor.submit(Trial.run, trial) for trial in trials
                     ]
@@ -159,6 +162,13 @@ class Trial:
         self.logger = logging.LoggerAdapter(
             self.logger, extra={'trialName': self.name}
         )
+        self._wbw_env = None
+
+    @property
+    def wbw_env(self) -> WbEnvironment:
+        if self._wbw_env is None:
+            self._wbw_env = get_wbw_env()
+        return self._wbw_env
 
     def get_resampled_dem(self) -> Path:
         dem_resampled_path = self.out_dir / 'dem_resampled.tif'
@@ -175,7 +185,9 @@ class Trial:
         return compute_slope(dem, slope_3x3_path)
 
     def get_slope_gradient(self, dem: Path) -> SlopeGradientComputationOutput:
-        hydro_analysis = HydrologicAnalysis(dem, out_dir=self.out_dir)
+        hydro_analysis = HydrologicAnalysis(
+            dem, out_dir=self.out_dir, wbw_env=self.wbw_env
+        )
         wbw_outlet = Outlets(
             [self.outlet], crs=self.outlet.crs
         ).to_whitebox_vector()
@@ -185,15 +197,19 @@ class Trial:
             outlet_snap_dist=100,
         )
 
-    def get_streams(
+    def get_streams_as_points(
         self, slope_grad: SlopeGradientComputationOutput
     ) -> WhiteboxVector:
-        streams_vec_path = self.out_dir / 'main_streams.shp'
-        streams_vec = WBW_ENV.raster_streams_to_vector(
-            slope_grad.streams,
-            slope_grad.flow.d8_pointer,
+        stream_profiles_path = self.out_dir / 'streams.shp'
+        stream_profiles = self.wbw_env.raster_to_vector_points(
+            slope_grad.streams
         )
-        return write_whitebox(streams_vec, streams_vec_path, overwrite=True)
+        return write_whitebox(
+            stream_profiles,
+            stream_profiles_path,
+            overwrite=True,
+            wbw_env=self.wbw_env,
+        )
 
     def get_profiles(
         self,
@@ -201,19 +217,30 @@ class Trial:
         slope_3x3: SAGARaster,
         slope_grad: SlopeGradientComputationOutput,
         streams: WhiteboxVector,
-    ) -> SAGAVector:
+    ) -> Path:
         profiles_path = self.out_dir / 'profiles.shp'
-
-        return compute_profile_from_lines(
-            dem=dem,
-            rasters=[
-                slope_grad.slope_grad.file_name,
-                slope_grad.flow.flow_accumulation.file_name,
-                slope_3x3.path,
-            ],
-            lines=streams.file_name,
-            out_profile=profiles_path,
+        rasters = {
+            'slope': self.wbw_env.read_raster(fspath(slope_3x3.path)),
+            'slope_grad': slope_grad.slope_grad,
+            'flowacc': slope_grad.flow.flow_accumulation,
+        }
+        output = self.wbw_env.extract_raster_values_at_points(
+            rasters=list(rasters.values()),
+            points=streams,
+        )[0]
+        write_whitebox(
+            output, profiles_path, overwrite=True, wbw_env=self.wbw_env
         )
+
+        # This only renames the fields.
+        # Can't figure out how to do it with the Whitebox Workflows API
+        gpd.read_file(profiles_path).rename(
+            columns={
+                f'VALUE{i}': raster_name
+                for i, raster_name in enumerate(rasters, start=1)
+            }
+        ).to_file(profiles_path)
+        return profiles_path
 
     def run(self) -> TrialResult:
         assert self.logger is not None
@@ -225,7 +252,7 @@ class Trial:
             self.logger.info('Generating stream network')
             slope_3x3 = self.get_3x3_slope(dem)
             self.logger.info('Computing slope gradient')
-            streams = self.get_streams(slope_grad)
+            streams = self.get_streams_as_points(slope_grad)
             self.logger.info('Generating profiles from stream network')
             profiles = self.get_profiles(dem, slope_3x3, slope_grad, streams)
             self.logger.info('Trial finished with success!')

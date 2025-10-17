@@ -28,6 +28,9 @@ from slope_area.utils import (
     write_whitebox,
 )
 
+if t.TYPE_CHECKING:
+    from whitebox_workflows.whitebox_workflows import WbEnvironment
+
 logger = create_logger(__name__)
 
 
@@ -42,6 +45,7 @@ class ComputationOutput:
         logger: logging.Logger | None = None,
         recurse: bool = False,
         overwrite: bool = False,
+        wbw_env: WbEnvironment = WBW_ENV,
     ):
         if logger is None:
             logger = create_logger(__file__)
@@ -59,7 +63,10 @@ class ComputationOutput:
             elif isinstance(output, ComputationOutput):
                 if recurse:
                     output.write_whitebox(
-                        out_dir=out_dir / name, prefix=prefix, recurse=recurse
+                        out_dir=out_dir / name,
+                        prefix=prefix,
+                        recurse=recurse,
+                        wbw_env=wbw_env,
                     )
                 continue
             else:
@@ -68,7 +75,13 @@ class ComputationOutput:
                     % (name, output)
                 )
                 continue
-            write_whitebox(output, out_file, logger=logger, overwrite=overwrite)
+            write_whitebox(
+                output,
+                out_file,
+                logger=logger,
+                overwrite=overwrite,
+                wbw_env=wbw_env,
+            )
 
 
 @dataclass(frozen=True)
@@ -97,17 +110,20 @@ class SlopeGradientComputationOutput(ComputationOutput):
 class HydrologicAnalysis:
     dem: WhiteboxRaster
     out_dir: Path
+    wbw_env: WbEnvironment
     _logger: logging.Logger = field(init=False, repr=False)
 
     def __init__(
         self,
         dem: PathLike | WhiteboxRaster,
         out_dir: PathLike = INTERIM_DATA_DIR,
+        wbw_env: WbEnvironment = WBW_ENV,
     ):
         self._logger = logger.getChild(self.__class__.__name__)
+        self.wbw_env = wbw_env
         if not isinstance(dem, WhiteboxRaster):
             self._logger.info('Reading the DEM at %s.' % dem)
-            dem = WBW_ENV.read_raster(fspath(dem))
+            dem = wbw_env.read_raster(fspath(dem))
         self.dem = dem
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(exist_ok=True)
@@ -115,11 +131,11 @@ class HydrologicAnalysis:
     @timeit(logger, logging.DEBUG)
     def preprocess_dem(self) -> WhiteboxRaster:
         self._logger.info('Breaching depressions in the DEM.')
-        dem_preproc = WBW_ENV.breach_depressions_least_cost(
+        dem_preproc = self.wbw_env.breach_depressions_least_cost(
             dem=self.dem, fill_deps=True
         )
         self._logger.info('Breaching single-cell pits.')
-        dem_preproc = WBW_ENV.breach_single_cell_pits(dem_preproc)
+        dem_preproc = self.wbw_env.breach_single_cell_pits(dem_preproc)
         return dem_preproc
 
     @timeit(logger, logging.DEBUG)
@@ -130,10 +146,10 @@ class HydrologicAnalysis:
             dem_preproc if dem_preproc is not None else self.preprocess_dem()
         )
         self._logger.info('Computing the D8 pointer.')
-        d8_pointer = WBW_ENV.d8_pointer(dem_preproc)
+        d8_pointer = self.wbw_env.d8_pointer(dem_preproc)
         self._logger.info('Computing the flow accumulation.')
         with suppress_stdout_stderr():
-            flow = WBW_ENV.d8_flow_accum(
+            flow = self.wbw_env.d8_flow_accum(
                 d8_pointer, out_type='catchment_area', input_is_pointer=True
             )
         return FlowAccumulationComputationOutput(dem_preproc, d8_pointer, flow)
@@ -147,18 +163,18 @@ class HydrologicAnalysis:
     ) -> WatershedComputationOutput:
         if isinstance(outlet, PathLike):
             self._logger.info('Reading the outlet %s.' % outlet)
-            outlet = WBW_ENV.read_vector(fspath(outlet))
+            outlet = self.wbw_env.read_vector(fspath(outlet))
         flow_output = self.compute_flow(dem_preproc)
         if outlet_snap_dist:
             self._logger.info(
                 'Snapping the outlet using a snap distance of %.1f'
                 % outlet_snap_dist
             )
-            outlet = WBW_ENV.snap_pour_points(
+            outlet = self.wbw_env.snap_pour_points(
                 outlet, flow_output.flow_accumulation, outlet_snap_dist
             )
         self._logger.info('Computing the watershed.')
-        watershed = WBW_ENV.watershed(flow_output.d8_pointer, outlet)
+        watershed = self.wbw_env.watershed(flow_output.d8_pointer, outlet)
         return WatershedComputationOutput(flow_output, outlet, watershed)
 
     @timeit(logger, logging.DEBUG)
@@ -169,11 +185,14 @@ class HydrologicAnalysis:
         outlet_snap_dist: int | None = None,
     ) -> SlopeGradientComputationOutput:
         write_whitebox_func = partial(
-            write_whitebox, logger=self._logger, overwrite=True
+            write_whitebox,
+            logger=self._logger,
+            overwrite=True,
+            wbw_env=self.wbw_env,
         )
         if isinstance(outlet, PathLike):
             self._logger.info('Reading the outlet %s.' % outlet)
-            outlet = WBW_ENV.read_vector(fspath(outlet))
+            outlet = self.wbw_env.read_vector(fspath(outlet))
 
         # ---- Computing D8 pointer and flow accumulation ----
         watershed_output = self.compute_watershed(outlet, outlet_snap_dist)
@@ -199,11 +218,11 @@ class HydrologicAnalysis:
             'Computing the slope gradient for the streams in the watershed.'
         )
         flow_watershed = self.compute_flow(dem_preproc_mask)
-        streams = WBW_ENV.extract_streams(
+        streams = self.wbw_env.extract_streams(
             flow_watershed.flow_accumulation, streams_flow_accum_threshold
         )
         slope_gradient = degree_to_percent(
-            WBW_ENV.stream_slope_continuous(
+            self.wbw_env.stream_slope_continuous(
                 flow_watershed.d8_pointer, streams, dem_preproc_mask
             )
         )
@@ -235,6 +254,23 @@ def compute_slope(elevation: PathLike, out_slope: PathLike) -> SAGARaster:
         unit_slope=2,  # Percent rise
         method=6,  # 9 parameter 2nd order polynom (Zevenbergen & Thorne 1987)
     ).rasters['slope']
+
+
+def grid_values_to_points(
+    rasters: c.Sequence[PathLike | str],
+    points: PathLike | str,
+) -> SAGAVector:
+    profiles_from_lines = SAGA_ENV / 'shapes_grid' / 'Add Grid Values to Points'
+    rasters_str = ';'.join(fspath(raster) for raster in rasters)
+    logger.info(
+        'Extracting points for rasters %s.'
+        % ', '.join([reprlib.repr(fspath(raster)) for raster in rasters])
+    )
+    return profiles_from_lines.execute(
+        verbose=False,
+        grids=rasters_str,
+        shapes=points,
+    )
 
 
 def compute_profile_from_lines(

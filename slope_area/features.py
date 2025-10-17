@@ -11,7 +11,6 @@ import typing as t
 import warnings
 
 import geopandas as gpd
-from geopandas import gpd
 import pyproj
 from rasterio import CRS
 from rasterio.warp import Resampling
@@ -26,6 +25,7 @@ from whitebox_workflows import (
     VectorGeometryType,
 )
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
+from whitebox_workflows.whitebox_workflows import WbEnvironment
 
 from slope_area import WBW_ENV
 from slope_area._typing import Resolution
@@ -116,6 +116,7 @@ class DEMTiles:
         outlet_snap_dist: int = 100,
         stream_units_threshold: int = 100,
         basins_strahler_order: int = 5,
+        wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self: ...
     @t.overload
     @classmethod
@@ -127,6 +128,7 @@ class DEMTiles:
             DEMTilesInferenceMethod.WATERSHED
         ] = DEMTilesInferenceMethod.WATERSHED,
         outlet_snap_dist: int = 100,
+        wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self: ...
     @classmethod
     @timeit(logger, level=logging.INFO)
@@ -138,6 +140,7 @@ class DEMTiles:
         outlet_snap_dist: int = 100,
         stream_units_threshold: int = 100,
         basins_strahler_order: int = 5,
+        wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self:
         match method:
             case DEMTilesInferenceMethod.STRAHLER_BASINS:
@@ -147,12 +150,14 @@ class DEMTiles:
                     outlet_snap_dist=outlet_snap_dist,
                     stream_units_threshold=stream_units_threshold,
                     basins_strahler_order=basins_strahler_order,
+                    wbw_env=wbw_env,
                 )
             case DEMTilesInferenceMethod.WATERSHED:
                 return cls._from_outlet_watershed(
                     outlet,
                     out_dir=out_dir,
                     outlet_snap_dist=outlet_snap_dist,
+                    wbw_env=wbw_env,
                 )
 
     @classmethod
@@ -162,6 +167,7 @@ class DEMTiles:
         outlet: Outlet,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
+        wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self:
         c_logger = logger.getChild(cls.__name__)
         c_logger.info('Infering DEM tiles based on the outlet.')
@@ -174,13 +180,13 @@ class DEMTiles:
         wbw_outlet = Outlets([outlet], crs=outlet.crs).to_whitebox_vector()
 
         # ---- Computing watershed ----
-        wbw_outlet_snapped = WBW_ENV.snap_pour_points(
+        wbw_outlet_snapped = wbw_env.snap_pour_points(
             wbw_outlet,
             flow_accum=flow_accum,
             snap_dist=outlet_snap_dist,
         )
-        watershed = WBW_ENV.watershed(d8_pointer, wbw_outlet_snapped)
-        watershed_vec = WBW_ENV.raster_to_vector_polygons(watershed)
+        watershed = wbw_env.watershed(d8_pointer, wbw_outlet_snapped)
+        watershed_vec = wbw_env.raster_to_vector_polygons(watershed)
         write_whitebox(
             watershed_vec,
             out_dir / 'watershed.shp',
@@ -201,6 +207,7 @@ class DEMTiles:
         outlet_snap_dist: int = 100,
         stream_units_threshold: int = 5,
         basins_strahler_order: int = 5,
+        wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self:
         c_logger = logger.getChild(cls.__name__)
         c_logger.info('Infering DEM tiles based on the outlet.')
@@ -224,9 +231,9 @@ class DEMTiles:
         c_logger.info(
             'Extracting the large basin intersecting with the outlet.'
         )
-        basins = WBW_ENV.basins(d8_pointer)
-        basins_as_vec = WBW_ENV.raster_to_vector_polygons(basins)
-        WBW_ENV.write_vector(basins_as_vec, fspath(basins_file))
+        basins = wbw_env.basins(d8_pointer)
+        basins_as_vec = wbw_env.raster_to_vector_polygons(basins)
+        wbw_env.write_vector(basins_as_vec, fspath(basins_file))
         with warnings.catch_warnings():
             # This gives RuntimeWarning about the geometry being invalid and corrected
             warnings.simplefilter('ignore')
@@ -234,15 +241,15 @@ class DEMTiles:
         basins_gdf[basins_gdf.intersects(outlet.geom)].make_valid().to_file(
             basin_file
         )
-        basin = WBW_ENV.read_vector(fspath(basin_file))
+        basin = wbw_env.read_vector(fspath(basin_file))
 
         # ---- Derive D8 pointer and flowacc from the masked DEM ----
         c_logger.info(
             'Masking the DEM with the large basin and generating D8 and flowacc.'
         )
-        dem_mask = WBW_ENV.clip_raster_to_polygon(dem, basin)
-        d8_pointer_mask = WBW_ENV.d8_pointer(dem_mask)
-        flow_mask = WBW_ENV.d8_flow_accum(
+        dem_mask = wbw_env.clip_raster_to_polygon(dem, basin)
+        d8_pointer_mask = wbw_env.d8_pointer(dem_mask)
+        flow_mask = wbw_env.d8_flow_accum(
             d8_pointer_mask, out_type='cells', input_is_pointer=True
         )
 
@@ -251,25 +258,25 @@ class DEMTiles:
             'Delineating basins based on the threshold strahler order of %i.'
             % basins_strahler_order
         )
-        streams = WBW_ENV.extract_streams(
+        streams = wbw_env.extract_streams(
             flow_mask, threshold=stream_units_threshold
         )
-        streams_strahler = WBW_ENV.strahler_stream_order(
+        streams_strahler = wbw_env.strahler_stream_order(
             d8_pointer_mask, streams
         )
         reclass: list[list[float]] = [
             [0, 0, basins_strahler_order],
             [1, basins_strahler_order, streams_strahler.configs.maximum],
         ]
-        streams_strahler_threshold = WBW_ENV.reclass(streams_strahler, reclass)
-        basins_strahler_threshold = WBW_ENV.subbasins(
+        streams_strahler_threshold = wbw_env.reclass(streams_strahler, reclass)
+        basins_strahler_threshold = wbw_env.subbasins(
             d8_pointer_mask, streams_strahler_threshold
         )
-        basins_strahler_as_vec = WBW_ENV.raster_to_vector_polygons(
+        basins_strahler_as_vec = wbw_env.raster_to_vector_polygons(
             basins_strahler_threshold
         )
         basins_strahler_as_vec_file = basins_file.with_stem('basins_strahler')
-        WBW_ENV.write_vector(
+        wbw_env.write_vector(
             basins_strahler_as_vec, fspath(basins_strahler_as_vec_file)
         )
 
