@@ -188,23 +188,16 @@ class HydrologicAnalysis:
 
         # ---- Using the watershed to mask the DEM ----
         self._logger.info('Masking the preprocessed DEM with the watershed.')
-        dem_preproc_mask_path = self.out_dir / 'dem_preproc_mask.tif'
-        raster_masking_tool = SAGA_ENV / 'grid_tools' / 'Grid Masking'
-        output = (
-            raster_masking_tool.execute(
-                grid=watershed_output.flow.dem_preproc.file_name,
-                mask=watershed_output.watershed.file_name,
-                masked=dem_preproc_mask_path,
-            )
-            .rasters['masked']
-            .path
+        dem_preproc_mask = watershed_output.watershed.con(
+            'value == 1',
+            true_raster_or_float=watershed_output.flow.dem_preproc,
+            false_raster_or_float=watershed_output.watershed,
         )
 
         # ---- Computing the slope gradient for the masked DEM ----
         self._logger.info(
             'Computing the slope gradient for the streams in the watershed.'
         )
-        dem_preproc_mask = WBW_ENV.read_raster(fspath(output))
         flow_watershed = self.compute_flow(dem_preproc_mask)
         streams = WBW_ENV.extract_streams(
             flow_watershed.flow_accumulation, streams_flow_accum_threshold
@@ -216,6 +209,10 @@ class HydrologicAnalysis:
         )
         slope_gradient_output = SlopeGradientComputationOutput(
             watershed_output, flow_watershed, streams, slope_gradient
+        )
+        write_whitebox_func(
+            slope_gradient_output.flow.dem_preproc,
+            self.out_dir / 'dem_preproc_mask.tif',
         )
         write_whitebox_func(
             slope_gradient_output.flow.flow_accumulation,
