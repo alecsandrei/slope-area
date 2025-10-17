@@ -6,6 +6,62 @@
 
 Tool that can be used to generate slope-area plots and other analysis.
 
+## 📚 Table of Contents
+
+1. [Installation](#installation)  
+   - [Download SAGA GIS](#download-saga-gis)  
+     - [Download SAGA GIS on Linux](#download-saga-gis-on-linux)  
+     - [Download SAGA GIS on Windows](#download-saga-gis-on-windows)  
+   - [Download package](#download-package)  
+   - [Activate environment](#activate-environment)  
+     - [Activate environment on Linux](#activate-environment-on-linux)  
+     - [Activate environment on Windows](#activate-environment-on-windows)  
+   - [Run tests](#run-tests)  
+2. [Project Organization](#project-organization)  
+3. [License](#license)
+
+## Installation
+
+### Download SAGA GIS
+
+#### Download SAGA GIS on Linux
+
+```sh
+sudo apt install saga
+```
+
+#### Download SAGA GIS on Windows
+
+Install the latest version on [https://sourceforge.net/projects/saga-gis/files/].
+
+### Download package
+
+```sh
+git clone https://github.com/alecsandrei/slope-area
+cd slope-area
+uv sync --frozen --dev
+```
+
+### Activate environment
+
+#### Activate environment on Linux
+
+```sh
+source .venv/bin/activate
+```
+
+#### Activate environment on Windows
+
+```sh
+.venv\Scripts\activate
+```
+
+### Run tests
+
+```sh
+pytest tests
+```
+
 ## Project Organization
 
 ```text
@@ -36,5 +92,9 @@ Tool that can be used to generate slope-area plots and other analysis.
 │
 └── slope_area   <- Source code for use in this project.
 ```
+
+## License
+
+MIT
 
 --------
