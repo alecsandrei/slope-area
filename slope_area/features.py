@@ -347,10 +347,7 @@ class Outlets(UserList[Outlet]):
             geometry = VectorGeometry.new_vector_geometry(
                 VectorGeometryType.Point
             )
-            if hasattr(Point2D, 'new'):
-                point = Point2D.new(outlet.geom.x, outlet.geom.y)
-            else:
-                point = Point2D(outlet.geom.x, outlet.geom.y)  # type: ignore
+            point = Point2D(outlet.geom.x, outlet.geom.y)  # type: ignore
             geometry.add_point(point)
             vector.add_record(geometry)
             vector.add_attribute_record(
