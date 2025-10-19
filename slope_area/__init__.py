@@ -19,12 +19,18 @@ __all__ = ['ErrorFilter', 'JSONFormatter', 'NonErrorFilter', 'ColoredFormatter']
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
+
+def get_wbw_env() -> WbEnvironment:
+    env: WbEnvironment = wbw.WbEnvironment()
+    env.verbose = False
+    return env
+
+
 setup_logging()
 logger = create_logger(__name__)
 
 logger.info('Initialized Whitebox Environment')
-WBW_ENV: WbEnvironment = wbw.WbEnvironment()
-WBW_ENV.verbose = False
+WBW_ENV: WbEnvironment = get_wbw_env()
 
 logger.info('Initialized SAGAGIS Environment')
 SAGA_ENV = PySAGA_cmd.SAGA('saga_cmd')
