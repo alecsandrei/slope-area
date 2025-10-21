@@ -229,7 +229,10 @@ class DEMTiles:
 
         # ---- CRS check ----
         for raster in (dem, d8_pointer):
-            if pyproj.CRS.from_string(raster.configs.projection) != outlet.crs:
+            if (
+                pyproj.CRS.from_epsg(raster.configs.epsg_code)
+                != outlet.crs.to_epsg()
+            ):
                 logger.error(
                     'CRS of outlet and raster %s do not match.'
                     % raster.file_name
