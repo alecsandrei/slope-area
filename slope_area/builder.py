@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import collections.abc as c
 import concurrent.futures
-from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 import logging
-from os import fspath
+from os import fspath, makedirs
 from pathlib import Path
 import time
 
@@ -38,6 +38,7 @@ from slope_area.logger import (
     MultiprocessingLog,
     RichDictHandler,
     create_logger,
+    silent_logs,
 )
 from slope_area.plot import preprocess_trial_results, slope_area_grid
 from slope_area.utils import redirect_warnings, write_whitebox
@@ -52,7 +53,9 @@ def make_table(logs: dict[str, str]) -> Table:
     return table
 
 
-def create_rich_logger(logger_name: str, logs: dict[str, str]):
+def create_rich_logger(
+    logger_name: str, logs: dict[str, str]
+) -> logging.Logger:
     r_logger = logger.getChild(logger_name)
     rich_handler = RichDictHandler(logs)
     handler = MultiprocessingLog([rich_handler])
@@ -61,7 +64,51 @@ def create_rich_logger(logger_name: str, logs: dict[str, str]):
 
 
 @dataclass
-class ResolutionPlotBuilder:
+class Builder(ABC):
+    @abstractmethod
+    def get_trials(self, logger: logging.Logger) -> list[Trial]: ...
+    @abstractmethod
+    def save_plot(self, trial_results: list[TrialResult]): ...
+    @property
+    @abstractmethod
+    def trial_names(self) -> list[str]: ...
+
+    def run_trials(
+        self, trials: c.Iterable[Trial], logs: dict[str, str]
+    ) -> list[concurrent.futures.Future[TrialResult]]:
+        # Silence logs. Otherwise stdout would be filled with other messages
+        with silent_logs('slopeArea'):
+            with Live(
+                make_table(logs),
+                refresh_per_second=10,
+                redirect_stderr=True,
+                redirect_stdout=True,
+            ) as live:
+                with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=WORKERS
+                ) as executor:
+                    futures = [
+                        executor.submit(Trial.run, trial) for trial in trials
+                    ]
+                    while any(f.running() for f in futures):
+                        live.update(make_table(logs))
+                        time.sleep(0.1)
+                    live.update(make_table(logs))
+        return futures
+
+    def build(self):
+        logs = {name: '[dim]Waiting...[/dim]' for name in self.trial_names}
+        m_logger = create_rich_logger(self.__class__.__name__, logs)
+        trials = self.get_trials(m_logger)
+        futures = self.run_trials(trials, logs)
+        trial_results = [
+            future.result() for future in futures if future.exception() is None
+        ]
+        self.save_plot(trial_results)
+
+
+@dataclass
+class ResolutionPlotBuilder(Builder):
     outlet: Outlet
     resolutions: c.Sequence[Resolution]
     out_dir: Path
@@ -105,38 +152,35 @@ class ResolutionPlotBuilder:
             out_fig=self.out_dir / 'slope_area.png',
         )
 
-    def run_trials(
-        self, trials: c.Iterable[Trial], logs: dict[str, str]
-    ) -> list[concurrent.futures.Future[TrialResult]]:
-        # Silence logs. Otherwise stdout would be filled with other messages
-        with silent_logs('slopeArea'):
-            with Live(
-                make_table(logs),
-                refresh_per_second=10,
-                redirect_stderr=False,
-                redirect_stdout=False,
-            ) as live:
-                with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=WORKERS
-                ) as executor:
-                    futures = [
-                        executor.submit(Trial.run, trial) for trial in trials
-                    ]
-                    while any(f.running() for f in futures):
-                        live.update(make_table(logs))
-                        time.sleep(0.1)
-                    live.update(make_table(logs))
-        return futures
 
-    def build(self):
-        logs = {name: '[dim]Waiting...[/dim]' for name in self.trial_names}
-        m_logger = create_rich_logger(self.__class__.__name__, logs)
-        trials = self.get_trials(m_logger)
-        futures = self.run_trials(trials, logs)
-        trial_results = [
-            future.result() for future in futures if future.exception() is None
+@dataclass
+class OutletPlotBuilder(Builder):
+    outlets: Outlets
+    resolution: Resolution
+    out_dir: Path
+
+    @cached_property
+    def trial_names(self) -> list[str]:
+        return [str(outlet) for outlet in self.outlets]
+
+    def get_trials(self, logger: logging.Logger) -> list[Trial]:
+        return [
+            Trial(
+                outlet=outlet,
+                out_dir=self.out_dir / trial_name,
+                name=trial_name,
+                resolution=self.resolution,
+                logger=logger,
+            )
+            for trial_name, outlet in zip(self.trial_names, self.outlets)
         ]
-        self.save_plot(trial_results)
+
+    def save_plot(self, trial_results: c.Iterable[TrialResult]) -> None:
+        slope_area_grid(
+            data=preprocess_trial_results(trial_results),
+            col='trial_name',
+            out_fig=self.out_dir / 'slope_area.png',
+        )
 
 
 @dataclass
@@ -147,22 +191,28 @@ class Trial:
     resolution: Resolution
     vrt: VRT | None = None
     logger: logging.Logger | None = None
+    logger_adapter: logging.LoggerAdapter = field(init=False)
 
     def __post_init__(self):
-        self.out_dir.mkdir(exist_ok=True)
+        makedirs(self.out_dir, exist_ok=True)
+        if self.logger is None:
+            self.logger = create_logger(__name__)
+        self.logger_adapter = logging.LoggerAdapter(
+            self.logger, extra={'trialName': self.name}
+        )
+        self._wbw_env = None
+
+    def get_vrt(self) -> VRT:
         if self.vrt is None:
+            assert self.logger_adapter is not None
+            self.logger_adapter.info('Generating VRT from DEM tiles')
             dem_tiles = DEMTiles.from_outlet(
                 self.outlet,
                 self.out_dir,
                 method=DEMTilesInferenceMethod.WATERSHED,
             )
             self.vrt = dem_tiles.build_vrt(self.out_dir / 'dem.vrt')
-        if self.logger is None:
-            self.logger = create_logger(__name__)
-        self.logger = logging.LoggerAdapter(
-            self.logger, extra={'trialName': self.name}
-        )
-        self._wbw_env = None
+        return self.vrt
 
     @property
     def wbw_env(self) -> WbEnvironment:
@@ -170,10 +220,10 @@ class Trial:
             self._wbw_env = get_wbw_env()
         return self._wbw_env
 
-    def get_resampled_dem(self) -> Path:
+    def get_resampled_dem(self, vrt: VRT) -> Path:
         dem_resampled_path = self.out_dir / 'dem_resampled.tif'
-        assert self.vrt is not None
-        return self.vrt.resample(
+        vrt = self.get_vrt()
+        return vrt.resample(
             out_file=dem_resampled_path,
             res=self.resolution,
         )
@@ -193,7 +243,7 @@ class Trial:
         ).to_whitebox_vector()
         return hydro_analysis.compute_slope_gradient(
             wbw_outlet,
-            streams_flow_accum_threshold=100,
+            streams_flow_accum_threshold=0,
             outlet_snap_dist=100,
         )
 
@@ -210,6 +260,21 @@ class Trial:
             overwrite=True,
             wbw_env=self.wbw_env,
         )
+
+    def rename_profiles_fields(
+        self, profiles: Path, raster_names: c.Iterable[str]
+    ) -> None:
+        # This renames the fields.
+        # Can't figure out how to do it with the Whitebox Workflows API
+        with redirect_warnings(
+            self.logger_adapter, RuntimeWarning, module='pyogrio.raw'
+        ):
+            gpd.read_file(profiles).rename(
+                columns={
+                    f'VALUE{i}': raster_name
+                    for i, raster_name in enumerate(raster_names, start=1)
+                }
+            ).to_file(profiles)
 
     def get_profiles(
         self,
@@ -232,58 +297,33 @@ class Trial:
             output, profiles_path, overwrite=True, wbw_env=self.wbw_env
         )
 
-        # This only renames the fields.
-        # Can't figure out how to do it with the Whitebox Workflows API
-        with redirect_warnings(
-            self.logger_adapter, RuntimeWarning, module='pyogrio.raw'
-        ):
-            gpd.read_file(profiles_path).rename(
-                columns={
-                    f'VALUE{i}': raster_name
-                    for i, raster_name in enumerate(rasters, start=1)
-                }
-            ).to_file(profiles_path)
+        self.rename_profiles_fields(profiles_path, rasters)
         return profiles_path
 
     def run(self) -> TrialResult:
-        assert self.logger is not None
+        assert self.logger_adapter is not None
         try:
-            self.logger.info('Resampling DEM')
-            dem = self.get_resampled_dem()
-            self.logger.info('Computing 3x3 slope')
+            vrt = self.get_vrt()
+            self.logger_adapter.info(
+                f'Resampling VRT DEM to resolution {self.resolution}'
+            )
+            dem = self.get_resampled_dem(vrt)
+            self.logger_adapter.info('Computing 3x3 slope')
             slope_grad = self.get_slope_gradient(dem)
-            self.logger.info('Generating stream network')
+            self.logger_adapter.info('Generating stream network')
             slope_3x3 = self.get_3x3_slope(dem)
-            self.logger.info('Computing slope gradient')
+            self.logger_adapter.info('Computing slope gradient')
             streams = self.get_streams_as_points(slope_grad)
-            self.logger.info('Generating profiles from stream network')
+            self.logger_adapter.info('Generating profiles from stream network')
             profiles = self.get_profiles(dem, slope_3x3, slope_grad, streams)
-            self.logger.info('Trial finished with success!')
+            self.logger_adapter.info('Trial finished with success!')
             ret = TrialResult(
                 self.name, gpd.read_file(profiles), self.resolution
             )
         except Exception as e:
-            self.logger.error('Trial failed with error: %s' % e)
+            self.logger_adapter.error('Trial failed with error: %s' % e)
             raise e
         return ret
-
-
-@contextmanager
-def silent_logs(*logger_names):
-    saved_handlers = {}
-    for name in logger_names:
-        logger = logging.getLogger(name)
-        saved_handlers[name] = logger.handlers[:]
-        logger.handlers = [
-            h
-            for h in logger.handlers
-            if not isinstance(h, logging.StreamHandler)
-        ]
-    try:
-        yield
-    finally:
-        for name, handlers in saved_handlers.items():
-            logging.getLogger(name).handlers = handlers
 
 
 @dataclass
