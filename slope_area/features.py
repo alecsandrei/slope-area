@@ -310,6 +310,9 @@ class Outlet:
     crs: pyproj.CRS
     name: str | None = None
 
+    def __str__(self):
+        return self.name
+
 
 @dataclass
 class Outlets(UserList[Outlet]):
