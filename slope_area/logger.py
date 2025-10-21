@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections.abc as c
+from contextlib import contextmanager
 import datetime as dt
 import json
 import logging
@@ -211,3 +212,22 @@ def setup_logging():
 def create_logger(name: str) -> logging.Logger:
     logger = logging.getLogger('slopeArea')
     return logger.getChild(name)
+
+
+@contextmanager
+def silent_logs(*logger_names):
+    saved_handlers = {}
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        saved_handlers[name] = logger.handlers[:]
+        # Maybe leave slopeAreaFile?
+        logger.handlers = [
+            h
+            for h in logger.handlers
+            if not isinstance(h, logging.StreamHandler)
+        ]
+    try:
+        yield
+    finally:
+        for name, handlers in saved_handlers.items():
+            logging.getLogger(name).handlers = handlers
