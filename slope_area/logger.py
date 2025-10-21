@@ -119,7 +119,7 @@ class JSONFormatter(logging.Formatter):
         message = {
             key: msg_val
             if (msg_val := always_fields.pop(val, None)) is not None
-            else getattr(record, val)
+            else getattr(record, val, None)
             for key, val in self.fmt_keys.items()
         }
         message.update(always_fields)
