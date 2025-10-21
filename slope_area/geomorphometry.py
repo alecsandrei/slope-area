@@ -218,8 +218,11 @@ class HydrologicAnalysis:
             'Computing the slope gradient for the streams in the watershed.'
         )
         flow_watershed = self.compute_flow(dem_preproc_mask)
-        streams = self.wbw_env.extract_streams(
-            flow_watershed.flow_accumulation, streams_flow_accum_threshold
+        streams = self.wbw_env.find_main_stem(
+            flow_watershed.d8_pointer,
+            self.wbw_env.extract_streams(
+                flow_watershed.flow_accumulation, streams_flow_accum_threshold
+            ),
         )
         slope_gradient = degree_to_percent(
             self.wbw_env.stream_slope_continuous(
