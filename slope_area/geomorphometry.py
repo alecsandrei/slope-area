@@ -302,7 +302,7 @@ def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
     return raster.to_radians().tan() * 100
 
 
-class InterimData(Enum):
+class DataGeneralizedDEM(Enum):
     DEM_30M_PREPROC = INTERIM_DATA_DIR / '30m' / 'dem_preproc.tif'
     DEM_30M_D8_POINTER = INTERIM_DATA_DIR / '30m' / 'd8_pointer.tif'
     DEM_30M_FLOW_ACCUM = INTERIM_DATA_DIR / '30m' / 'flow_accumulation.tif'
@@ -347,25 +347,25 @@ class InterimData(Enum):
                 return WBW_ENV.read_raster(fspath(self.value))
             return self.value
         match self:
-            case InterimData.DEM_30M_PREPROC:
+            case DataGeneralizedDEM.DEM_30M_PREPROC:
                 ret = self._get_dem_preproc(DEM_30M)
-            case InterimData.DEM_30M_D8_POINTER:
+            case DataGeneralizedDEM.DEM_30M_D8_POINTER:
                 ret = self._get_flow_output(
-                    InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
+                    DataGeneralizedDEM.DEM_30M_PREPROC._get(as_whitebox=True),
                 ).d8_pointer
-            case InterimData.DEM_30M_FLOW_ACCUM:
+            case DataGeneralizedDEM.DEM_30M_FLOW_ACCUM:
                 ret = self._get_flow_output(
-                    InterimData.DEM_30M_PREPROC._get(as_whitebox=True),
+                    DataGeneralizedDEM.DEM_30M_PREPROC._get(as_whitebox=True),
                 ).flow_accumulation
-            case InterimData.DEM_90M_PREPROC:
+            case DataGeneralizedDEM.DEM_90M_PREPROC:
                 ret = self._get_dem_preproc(DEM_90M)
-            case InterimData.DEM_90M_D8_POINTER:
+            case DataGeneralizedDEM.DEM_90M_D8_POINTER:
                 ret = self._get_flow_output(
-                    InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
+                    DataGeneralizedDEM.DEM_90M_PREPROC._get(as_whitebox=True),
                 ).d8_pointer
-            case InterimData.DEM_90M_FLOW_ACCUM:
+            case DataGeneralizedDEM.DEM_90M_FLOW_ACCUM:
                 ret = self._get_flow_output(
-                    InterimData.DEM_90M_PREPROC._get(as_whitebox=True),
+                    DataGeneralizedDEM.DEM_90M_PREPROC._get(as_whitebox=True),
                 ).flow_accumulation
         if not as_whitebox:
             return Path(ret.file_name)

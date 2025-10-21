@@ -31,7 +31,7 @@ from slope_area.config import (
     DEM_DIR,
     DEM_TILES,
 )
-from slope_area.geomorphometry import InterimData
+from slope_area.geomorphometry import DataGeneralizedDEM
 from slope_area.logger import create_logger
 from slope_area.utils import (
     redirect_warnings,
@@ -175,9 +175,13 @@ class DEMTiles:
         out_dir = Path(out_dir)
         out_dir.mkdir(exist_ok=True)
 
-        ## ---- Read data ----
-        d8_pointer = InterimData.DEM_30M_D8_POINTER._get(as_whitebox=True)
-        flow_accum = InterimData.DEM_30M_FLOW_ACCUM._get(as_whitebox=True)
+        # ---- Read data ----
+        d8_pointer = DataGeneralizedDEM.DEM_30M_D8_POINTER._get(
+            as_whitebox=True
+        )
+        flow_accum = DataGeneralizedDEM.DEM_30M_FLOW_ACCUM._get(
+            as_whitebox=True
+        )
         wbw_outlet = Outlets([outlet], crs=outlet.crs).to_whitebox_vector()
 
         # ---- Computing watershed ----
