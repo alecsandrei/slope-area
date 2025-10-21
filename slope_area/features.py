@@ -8,7 +8,6 @@ import logging
 from os import fspath
 from pathlib import Path
 import typing as t
-import warnings
 
 import geopandas as gpd
 import pyproj
@@ -36,6 +35,7 @@ from slope_area.config import (
 from slope_area.geomorphometry import InterimData
 from slope_area.logger import create_logger
 from slope_area.utils import (
+    redirect_warnings,
     resample,
     timeit,
     write_whitebox,
@@ -193,9 +193,12 @@ class DEMTiles:
             logger=c_logger,
             overwrite=True,
         )
-        watershed = (
-            gpd.read_file(watershed_vec.file_name).geometry.make_valid().iloc[0]
-        )
+        with redirect_warnings(c_logger, RuntimeWarning, 'pyogrio.raw'):
+            watershed = (
+                gpd.read_file(watershed_vec.file_name)
+                .geometry.make_valid()
+                .iloc[0]
+            )
         return cls.from_polygon(watershed)
 
     @classmethod
@@ -234,9 +237,7 @@ class DEMTiles:
         basins = wbw_env.basins(d8_pointer)
         basins_as_vec = wbw_env.raster_to_vector_polygons(basins)
         wbw_env.write_vector(basins_as_vec, fspath(basins_file))
-        with warnings.catch_warnings():
-            # This gives RuntimeWarning about the geometry being invalid and corrected
-            warnings.simplefilter('ignore')
+        with redirect_warnings(logger, RuntimeWarning, 'pyogrio.raw'):
             basins_gdf = gpd.read_file(basins_file)
         basins_gdf[basins_gdf.intersects(outlet.geom)].make_valid().to_file(
             basin_file
@@ -282,9 +283,7 @@ class DEMTiles:
 
         # ---- Extract the basin(s) overlapping the outlet ----
         c_logger.info('Extracting the subbasin(s) overlapping the outlet.')
-        with warnings.catch_warnings():
-            # This gives RuntimeWarning about the geometry being invalid and corrected
-            warnings.simplefilter('ignore')
+        with redirect_warnings(c_logger, RuntimeWarning, module='pyogrio.raw'):
             basins_strahler_gdf = gpd.read_file(basins_strahler_as_vec_file)
         basin_strahler: shapely.Polygon | shapely.MultiPolygon = (
             basins_strahler_gdf[

@@ -19,7 +19,10 @@
         "line": "lineno",
         "thread_name": "threadName",
         "process": "process",
-        "process_name": "processName"
+        "process_name": "processName",
+        "warning_category": "warningCategory",
+        "warning_filename": "warningFileName",
+        "warning_lineno": "warningLineNo"
       }
     }
   },

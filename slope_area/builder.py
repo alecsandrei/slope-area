@@ -40,7 +40,7 @@ from slope_area.logger import (
     create_logger,
 )
 from slope_area.plot import preprocess_trial_results, slope_area_grid
-from slope_area.utils import write_whitebox
+from slope_area.utils import redirect_warnings, write_whitebox
 
 logger = create_logger(__name__)
 
@@ -234,12 +234,15 @@ class Trial:
 
         # This only renames the fields.
         # Can't figure out how to do it with the Whitebox Workflows API
-        gpd.read_file(profiles_path).rename(
-            columns={
-                f'VALUE{i}': raster_name
-                for i, raster_name in enumerate(rasters, start=1)
-            }
-        ).to_file(profiles_path)
+        with redirect_warnings(
+            self.logger_adapter, RuntimeWarning, module='pyogrio.raw'
+        ):
+            gpd.read_file(profiles_path).rename(
+                columns={
+                    f'VALUE{i}': raster_name
+                    for i, raster_name in enumerate(rasters, start=1)
+                }
+            ).to_file(profiles_path)
         return profiles_path
 
     def run(self) -> TrialResult:

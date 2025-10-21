@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 from functools import partial, wraps
+import importlib.util
 import logging
 import os
 from pathlib import Path
 import sys
 import time
 import typing as t
+import warnings
 
 import numpy as np
 import rasterio as rio
@@ -140,6 +143,61 @@ def timeit(logger: logging.Logger | None = None, level: int = logging.INFO):
         return wrapper
 
     return decorator
+
+
+@contextmanager
+def redirect_warnings_context():
+    parent_logger = logging.getLogger('slopeArea')
+    original_handlers = parent_logger.handlers[:]
+    handlers = [logging.getHandlerByName('slopeAreaFile')]
+    parent_logger.handlers = handlers
+    try:
+        yield
+    finally:
+        parent_logger.handlers = original_handlers
+
+
+@contextmanager
+def redirect_warnings(
+    logger: logging.Logger | logging.LoggerAdapter,
+    warning_category,
+    module,
+):
+    """Redirects all warnings to logger, disabling all handlers except slopeAreaFile.
+
+    This was written due to the many warnings displayed by GDAL with the
+    ESRI Shapefile driver. slope-area uses shapefiles because this is the
+    only driver currently supported by Whitebox Tools.
+    """
+    extra: dict[str, t.Any] = {}
+    if isinstance(logger, logging.LoggerAdapter):
+        if logger.extra:
+            extra.update(logger.extra)
+        logger = logger.logger
+    assert isinstance(logger, logging.Logger)
+    curr_showwarning = copy.copy(warnings.showwarning)
+    spec = importlib.util.find_spec(module)
+
+    def showwarning(message, category, filename, lineno, file=None, line=None):
+        if category is warning_category and filename == spec.origin:
+            with redirect_warnings_context():
+                logger.warning(
+                    str(message),
+                    extra={
+                        'warningCategory': category.__name__,
+                        'warningFileName': filename,
+                        'warningLineNo': lineno,
+                        **extra,
+                    },
+                )
+        else:
+            curr_showwarning(message, category, filename, lineno, file, line)
+
+    warnings.showwarning = showwarning
+    try:
+        yield
+    finally:
+        warnings.showwarning = curr_showwarning
 
 
 @contextmanager
