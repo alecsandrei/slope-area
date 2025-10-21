@@ -24,7 +24,6 @@ from whitebox_workflows import (
     VectorGeometryType,
 )
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
-from whitebox_workflows.whitebox_workflows import WbEnvironment
 
 from slope_area import WBW_ENV
 from slope_area._typing import Resolution
@@ -43,6 +42,8 @@ from slope_area.utils import (
 
 if t.TYPE_CHECKING:
     from os import PathLike
+
+    from whitebox_workflows.whitebox_workflows import WbEnvironment
 
 
 logger = create_logger(__name__)
