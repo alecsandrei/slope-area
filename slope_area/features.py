@@ -222,8 +222,10 @@ class DEMTiles:
         out_dir = Path(out_dir)
 
         # ---- Read data ----
-        dem = InterimData.DEM_30M_PREPROC._get(as_whitebox=True)
-        d8_pointer = InterimData.DEM_30M_D8_POINTER._get(as_whitebox=True)
+        dem = DataGeneralizedDEM.DEM_30M_PREPROC._get(as_whitebox=True)
+        d8_pointer = DataGeneralizedDEM.DEM_30M_D8_POINTER._get(
+            as_whitebox=True
+        )
 
         # ---- CRS check ----
         for raster in (dem, d8_pointer):
