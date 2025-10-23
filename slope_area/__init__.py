@@ -5,6 +5,7 @@ import typing as t
 import PySAGA_cmd
 import whitebox_workflows as wbw
 
+from slope_area.config import SAGA_CMD
 from slope_area.logger import (
     ColoredFormatter,
     ErrorFilter,
@@ -29,11 +30,11 @@ def get_wbw_env() -> WbEnvironment:
 setup_logging()
 logger = create_logger(__name__)
 
-logger.info('Initialized Whitebox Environment')
 WBW_ENV: WbEnvironment = get_wbw_env()
+logger.info('Initialized Whitebox Environment')
 
+SAGA_ENV = PySAGA_cmd.SAGA(SAGA_CMD)
 logger.info('Initialized SAGAGIS Environment')
-SAGA_ENV = PySAGA_cmd.SAGA('saga_cmd')
 
 # Data settings
 if SAGA_ENV.version is None or SAGA_ENV.version.major <= 8:
