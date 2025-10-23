@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import collections.abc as c
 from dataclasses import dataclass, field
-from enum import Enum
-from functools import partial
+from functools import cache, partial
 import logging
 from os import PathLike, fspath, makedirs
 from pathlib import Path
@@ -17,8 +16,6 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import SAGA_ENV, WBW_ENV
 from slope_area.config import (
-    DEM_30M,
-    DEM_90M,
     INTERIM_DATA_DIR,
 )
 from slope_area.logger import create_logger
@@ -305,71 +302,45 @@ def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:
     return raster.to_radians().tan() * 100
 
 
-class DataGeneralizedDEM(Enum):
-    DEM_30M_PREPROC = INTERIM_DATA_DIR / '30m' / 'dem_preproc.tif'
-    DEM_30M_D8_POINTER = INTERIM_DATA_DIR / '30m' / 'd8_pointer.tif'
-    DEM_30M_FLOW_ACCUM = INTERIM_DATA_DIR / '30m' / 'flow_accumulation.tif'
-    DEM_90M_PREPROC = INTERIM_DATA_DIR / '90m' / 'dem_preproc.tif'
-    DEM_90M_D8_POINTER = INTERIM_DATA_DIR / '90m' / 'd8_pointer.tif'
-    DEM_90M_FLOW_ACCUM = INTERIM_DATA_DIR / '90m' / 'flow_accumulation.tif'
+@dataclass(frozen=True, eq=True)
+class GeneralizedDEM:
+    dem: PathLike
+    out_dir: PathLike
 
-    def _get_dem_preproc(self, dem: Path) -> WhiteboxRaster:
-        self.value.parent.mkdir(exist_ok=True)
-        c_logger = logger.getChild(self.__class__.__name__)
-        dem_preproc = HydrologicAnalysis(
-            dem, self.value.parent
-        ).preprocess_dem()
-        write_whitebox(
-            dem_preproc, self.value, overwrite=False, logger=c_logger
-        )
-        return dem_preproc
+    @property
+    def dem_preproc(self) -> WhiteboxRaster:
+        return self.get_flow_output().dem_preproc
 
-    def _get_flow_output(
-        self, dem_preproc: WhiteboxRaster
-    ) -> FlowAccumulationComputationOutput:
-        self.value.parent.mkdir(exist_ok=True)
-        c_logger = logger.getChild(self.__class__.__name__)
-        hydro_analysis = HydrologicAnalysis(
-            dem_preproc, out_dir=self.value.parent
-        )
-        output = hydro_analysis.compute_flow(hydro_analysis.dem)
-        output.write_whitebox(
-            self.value.parent, overwrite=False, logger=c_logger
-        )
-        return output
+    @property
+    def d8_pointer(self) -> WhiteboxRaster:
+        return self.get_flow_output().d8_pointer
 
-    @t.overload
-    def _get(self, *, as_whitebox: t.Literal[True]) -> WhiteboxRaster: ...
-    @t.overload
-    def _get(self, *, as_whitebox: t.Literal[False] = False) -> Path: ...
-    def _get(self, *, as_whitebox: bool = False) -> Path | WhiteboxRaster:
-        c_logger = logger.getChild(self.__class__.__name__)
-        if self.value.exists():
-            if as_whitebox:
-                c_logger.info('Reading file at %s.' % self.value)
-                return WBW_ENV.read_raster(fspath(self.value))
-            return self.value
-        match self:
-            case DataGeneralizedDEM.DEM_30M_PREPROC:
-                ret = self._get_dem_preproc(DEM_30M)
-            case DataGeneralizedDEM.DEM_30M_D8_POINTER:
-                ret = self._get_flow_output(
-                    DataGeneralizedDEM.DEM_30M_PREPROC._get(as_whitebox=True),
-                ).d8_pointer
-            case DataGeneralizedDEM.DEM_30M_FLOW_ACCUM:
-                ret = self._get_flow_output(
-                    DataGeneralizedDEM.DEM_30M_PREPROC._get(as_whitebox=True),
-                ).flow_accumulation
-            case DataGeneralizedDEM.DEM_90M_PREPROC:
-                ret = self._get_dem_preproc(DEM_90M)
-            case DataGeneralizedDEM.DEM_90M_D8_POINTER:
-                ret = self._get_flow_output(
-                    DataGeneralizedDEM.DEM_90M_PREPROC._get(as_whitebox=True),
-                ).d8_pointer
-            case DataGeneralizedDEM.DEM_90M_FLOW_ACCUM:
-                ret = self._get_flow_output(
-                    DataGeneralizedDEM.DEM_90M_PREPROC._get(as_whitebox=True),
-                ).flow_accumulation
-        if not as_whitebox:
-            return Path(ret.file_name)
-        return ret
+    @property
+    def flow_accum(self) -> WhiteboxRaster:
+        return self.get_flow_output().flow_accumulation
+
+    @timeit(logger, level=logging.DEBUG)
+    def read_rasters(self, rasters: c.Iterable[PathLike]):
+        # also tried read_rasters but it panics
+        return [WBW_ENV.read_raster(fspath(raster)) for raster in rasters]
+
+    @cache
+    def get_flow_output(self) -> FlowAccumulationComputationOutput:
+        out_dir = Path(self.out_dir)
+        rasters = (
+            out_dir / 'dem_preproc.tif',
+            out_dir / 'd8_pointer.tif',
+            out_dir / 'flow_accumulation.tif',
+        )
+        if all(raster.exists() for raster in rasters):
+            wbw_rasters = self.read_rasters(rasters)
+            return FlowAccumulationComputationOutput(*wbw_rasters)
+        else:
+            hydro_analysis = HydrologicAnalysis(self.dem, out_dir=self.out_dir)
+            output = hydro_analysis.compute_flow()
+            output.write_whitebox(
+                out_dir,
+                overwrite=True,
+                logger=logger.getChild(self.__class__.__name__),
+            )
+            return output
