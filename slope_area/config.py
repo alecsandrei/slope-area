@@ -15,9 +15,9 @@ INTERIM_DATA_DIR = DATA_DIR / 'interim'
 load_dotenv(PROJ_ROOT / '.env', verbose=True)
 
 DEM_DIR = Path(os.environ['DEM_DIR'])
+DEM_DIR_EPSG = int(os.environ['DEM_DIR_EPSG'])
 GENERALIZED_DEM = Path(os.environ['GENERALIZED_DEM'])
 SAGA_CMD = os.environ.get('SAGA_CMD', 'saga_cmd')
 OUTLET_SNAP_DIST = float(os.environ.get('OUTLET_SNAP_DIST', 100))
 TRIAL_WORKERS = int(os.environ.get('TRIAL_WORKERS', 4))
-
-DEM_TILES = RAW_DATA_DIR / 'dem_tiles.fgb'
+DEM_TILES = Path(os.environ.get('DEM_TILES', DATA_DIR / 'dem_tiles.shp'))

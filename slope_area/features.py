@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import UserList
 import collections.abc as c
+import concurrent.futures
 from dataclasses import dataclass, field
 import logging
 from os import makedirs
@@ -10,10 +11,12 @@ import typing as t
 
 import geopandas as gpd
 import pyproj
+import rasterio as rio
 from rasterio import CRS
 from rasterio.warp import Resampling
 from rio_vrt import build_vrt
 import shapely
+from shapely.geometry.base import BaseGeometry
 from whitebox_workflows import (
     AttributeField,
     FieldData,
@@ -28,6 +31,7 @@ from slope_area import WBW_ENV
 from slope_area._typing import Resolution
 from slope_area.config import (
     DEM_DIR,
+    DEM_DIR_EPSG,
     DEM_TILES,
 )
 from slope_area.geomorphometry import GeneralizedDEM
@@ -71,6 +75,79 @@ class VRT:
         return resample(
             self.path, out_file, res=res, kwargs_reproject=reproject_kwargs
         )
+
+
+class Feature(t.TypedDict):
+    type: t.Literal['Feature']
+    properties: c.Mapping[str, t.Any]
+    geometry: BaseGeometry
+
+
+class FeatureCollection(t.TypedDict):
+    type: t.Literal['FeatureCollection']
+    features: c.MutableSequence[Feature]
+
+
+@dataclass
+class DEMTilesBuilder:
+    @classmethod
+    def build(cls) -> None:
+        c_logger = logger.getChild(cls.__name__)
+        assert DEM_DIR.exists(), f'{DEM_DIR} does not exist'
+
+        if DEM_TILES.exists():
+            c_logger.info('Found DEM tiles at %s' % DEM_TILES)
+            return None
+
+        c_logger.info(
+            'Extracting raster boundaries from %s to %s' % (DEM_DIR, DEM_TILES)
+        )
+
+        rasters = list(DEM_DIR.rglob('*.tif'))
+        total = len(rasters)
+        if not total:
+            raise FileNotFoundError(f'No .tif rasters found in {DEM_DIR}')
+
+        feature_coll: FeatureCollection = {
+            'type': 'FeatureCollection',
+            'features': [],
+        }
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(cls.get_feature, raster) for raster in rasters
+            ]
+
+            for i, future in enumerate(
+                concurrent.futures.as_completed(futures), start=1
+            ):
+                if not future.exception():
+                    feature_coll['features'].append(future.result())
+                if i % 1000 == 0 or i == total:
+                    c_logger.info('Completed %i/%i rasters', i, total)
+
+        gdf = gpd.GeoDataFrame.from_features(feature_coll, crs=DEM_DIR_EPSG)
+        logger.info('Saving DEM boundaries to %s' % DEM_TILES)
+        gdf.to_file(DEM_TILES)
+
+    @classmethod
+    def get_feature(cls, raster: Path) -> Feature:
+        return {
+            'type': 'Feature',
+            'properties': {'path': raster.relative_to(DEM_DIR).as_posix()},
+            'geometry': cls.get_raster_bounds(raster),
+        }
+
+    @staticmethod
+    def get_raster_bounds(raster: Path) -> shapely.Polygon:
+        try:
+            with rio.open(raster) as src:
+                return shapely.box(*src.bounds)
+        except Exception as e:
+            logger.error(
+                'Failed to compute the boundary of the raster %s' % raster
+            )
+            raise e
 
 
 @dataclass
