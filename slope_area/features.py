@@ -159,7 +159,7 @@ class DEMTiles:
         return cls.from_polygon(watershed)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=True)
 class Outlet:
     geom: shapely.Point
     crs: pyproj.CRS
