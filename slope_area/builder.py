@@ -47,7 +47,9 @@ logger = create_logger(__name__)
 
 
 def make_table(logs: dict[str, str]) -> Table:
-    table = Table(box=box.SIMPLE, show_header=False, expand=True)
+    table = Table(box=box.SQUARE_DOUBLE_HEAD, show_header=True, expand=True)
+    table.add_column('Trial')
+    table.add_column('Status')
     for trial, log in logs.items():
         table.add_row(f'[bold]Trial "{trial}"[/bold]', log)
     return table
