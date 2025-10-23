@@ -25,11 +25,11 @@ from slope_area.config import OUTLET_SNAP_DIST, TRIAL_WORKERS
 from slope_area.features import (
     VRT,
     DEMTiles,
-    DEMTilesInferenceMethod,
     Outlet,
     Outlets,
 )
 from slope_area.geomorphometry import (
+    GeneralizedDEM,
     HydrologicAnalysis,
     SlopeGradientComputationOutput,
     compute_slope,
@@ -111,15 +111,16 @@ class Builder(ABC):
 class ResolutionPlotBuilder(Builder):
     outlet: Outlet
     resolutions: c.Sequence[Resolution]
+    generalized_dem: GeneralizedDEM
     out_dir: Path
 
     def get_vrt(self) -> VRT:
         dem = self.out_dir / 'dem.vrt'
         return DEMTiles.from_outlet(
-            self.outlet,
-            self.out_dir,
-            method=DEMTilesInferenceMethod.WATERSHED,
-            outlet_snap_dist=100,
+            outlet=self.outlet,
+            generalized_dem=self.generalized_dem,
+            out_dir=self.out_dir,
+            outlet_snap_dist=OUTLET_SNAP_DIST,
         ).build_vrt(dem)
 
     @cached_property
@@ -157,6 +158,7 @@ class ResolutionPlotBuilder(Builder):
 class OutletPlotBuilder(Builder):
     outlets: Outlets
     resolution: Resolution
+    generalized_dem: GeneralizedDEM
     out_dir: Path
 
     @cached_property
@@ -170,6 +172,7 @@ class OutletPlotBuilder(Builder):
                 out_dir=self.out_dir / trial_name,
                 name=trial_name,
                 resolution=self.resolution,
+                generalized_dem=self.generalized_dem,
                 logger=logger,
             )
             for trial_name, outlet in zip(self.trial_names, self.outlets)
@@ -189,6 +192,7 @@ class Trial:
     out_dir: Path
     name: str
     resolution: Resolution
+    generalized_dem: GeneralizedDEM | None = None
     vrt: VRT | None = None
     logger: logging.Logger | None = None
     logger_adapter: logging.LoggerAdapter = field(init=False)
@@ -200,16 +204,19 @@ class Trial:
         self.logger_adapter = logging.LoggerAdapter(
             self.logger, extra={'trialName': self.name}
         )
-        self._wbw_env = None
 
     def get_vrt(self) -> VRT:
         if self.vrt is None:
+            if self.generalized_dem is None:
+                raise ValueError(
+                    'Please initialize Trial with either vrt or generalized_dem'
+                )
             assert self.logger_adapter is not None
             self.logger_adapter.info('Generating VRT from DEM tiles')
             dem_tiles = DEMTiles.from_outlet(
-                self.outlet,
-                self.out_dir,
-                method=DEMTilesInferenceMethod.WATERSHED,
+                outlet=self.outlet,
+                generalized_dem=self.generalized_dem,
+                out_dir=self.out_dir,
             )
             self.vrt = dem_tiles.build_vrt(self.out_dir / 'dem.vrt')
         return self.vrt
