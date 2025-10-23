@@ -165,8 +165,11 @@ class Outlet:
     crs: pyproj.CRS
     name: str | None = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
+
+    def __repr__(self) -> str:
+        return f'Outlet(geom={self.geom}, crs={self.crs.to_epsg()}, name={self.name})'
 
 
 @dataclass
