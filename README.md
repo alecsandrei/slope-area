@@ -32,7 +32,7 @@ sudo apt install saga
 
 #### Download SAGA GIS on Windows
 
-Install the latest version on [https://sourceforge.net/projects/saga-gis/files/].
+Install the latest version on [SourceForge](https://sourceforge.net/projects/saga-gis/files/latest/download).
 
 ### Download package
 
