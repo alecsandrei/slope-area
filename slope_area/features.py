@@ -3,9 +3,8 @@ from __future__ import annotations
 from collections import UserList
 import collections.abc as c
 from dataclasses import dataclass, field
-from enum import Enum, auto
 import logging
-from os import fspath
+from os import makedirs
 from pathlib import Path
 import typing as t
 
@@ -31,7 +30,7 @@ from slope_area.config import (
     DEM_DIR,
     DEM_TILES,
 )
-from slope_area.geomorphometry import DataGeneralizedDEM
+from slope_area.geomorphometry import GeneralizedDEM
 from slope_area.logger import create_logger
 from slope_area.utils import (
     redirect_warnings,
@@ -47,11 +46,6 @@ if t.TYPE_CHECKING:
 
 
 logger = create_logger(__name__)
-
-
-class DEMTilesInferenceMethod(Enum):
-    STRAHLER_BASINS = auto()
-    WATERSHED = auto()
 
 
 @dataclass
@@ -105,67 +99,29 @@ class DEMTiles:
         )
         return cls(subset)
 
-    @t.overload
-    @classmethod
-    def from_outlet(
-        cls,
-        outlet: Outlet,
-        out_dir: PathLike,
-        method: t.Literal[
-            DEMTilesInferenceMethod.STRAHLER_BASINS
-        ] = DEMTilesInferenceMethod.STRAHLER_BASINS,
-        outlet_snap_dist: int = 100,
-        stream_units_threshold: int = 100,
-        basins_strahler_order: int = 5,
-        wbw_env: WbEnvironment = WBW_ENV,
-    ) -> t.Self: ...
-    @t.overload
-    @classmethod
-    def from_outlet(
-        cls,
-        outlet: Outlet,
-        out_dir: PathLike,
-        method: t.Literal[
-            DEMTilesInferenceMethod.WATERSHED
-        ] = DEMTilesInferenceMethod.WATERSHED,
-        outlet_snap_dist: int = 100,
-        wbw_env: WbEnvironment = WBW_ENV,
-    ) -> t.Self: ...
     @classmethod
     @timeit(logger, level=logging.INFO)
     def from_outlet(
         cls,
         outlet: Outlet,
+        generalized_dem: GeneralizedDEM,
         out_dir: PathLike,
-        method: DEMTilesInferenceMethod = DEMTilesInferenceMethod.WATERSHED,
         outlet_snap_dist: int = 100,
-        stream_units_threshold: int = 100,
-        basins_strahler_order: int = 5,
         wbw_env: WbEnvironment = WBW_ENV,
     ) -> t.Self:
-        match method:
-            case DEMTilesInferenceMethod.STRAHLER_BASINS:
-                return cls._from_outlet_strahler_basins(
-                    outlet,
-                    out_dir=out_dir,
-                    outlet_snap_dist=outlet_snap_dist,
-                    stream_units_threshold=stream_units_threshold,
-                    basins_strahler_order=basins_strahler_order,
-                    wbw_env=wbw_env,
-                )
-            case DEMTilesInferenceMethod.WATERSHED:
-                return cls._from_outlet_watershed(
-                    outlet,
-                    out_dir=out_dir,
-                    outlet_snap_dist=outlet_snap_dist,
-                    wbw_env=wbw_env,
-                )
+        return cls._from_outlet_watershed(
+            outlet,
+            generalized_dem=generalized_dem,
+            out_dir=out_dir,
+            outlet_snap_dist=outlet_snap_dist,
+            wbw_env=wbw_env,
+        )
 
     @classmethod
-    @timeit(logger, level=logging.INFO)
     def _from_outlet_watershed(
         cls,
         outlet: Outlet,
+        generalized_dem: GeneralizedDEM,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
         wbw_env: WbEnvironment = WBW_ENV,
@@ -173,24 +129,20 @@ class DEMTiles:
         c_logger = logger.getChild(cls.__name__)
         c_logger.info('Infering DEM tiles based on the outlet.')
         out_dir = Path(out_dir)
-        out_dir.mkdir(exist_ok=True)
+        makedirs(out_dir, exist_ok=True)
 
         # ---- Read data ----
-        d8_pointer = DataGeneralizedDEM.DEM_30M_D8_POINTER._get(
-            as_whitebox=True
-        )
-        flow_accum = DataGeneralizedDEM.DEM_30M_FLOW_ACCUM._get(
-            as_whitebox=True
-        )
         wbw_outlet = Outlets([outlet], crs=outlet.crs).to_whitebox_vector()
 
         # ---- Computing watershed ----
         wbw_outlet_snapped = wbw_env.snap_pour_points(
             wbw_outlet,
-            flow_accum=flow_accum,
+            flow_accum=generalized_dem.flow_accum,
             snap_dist=outlet_snap_dist,
         )
-        watershed = wbw_env.watershed(d8_pointer, wbw_outlet_snapped)
+        watershed = wbw_env.watershed(
+            generalized_dem.d8_pointer, wbw_outlet_snapped
+        )
         watershed_vec = wbw_env.raster_to_vector_polygons(watershed)
         write_whitebox(
             watershed_vec,
