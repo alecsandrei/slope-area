@@ -196,8 +196,9 @@ class Trial:
     resolution: Resolution
     generalized_dem: GeneralizedDEM | None = None
     vrt: VRT | None = None
-    logger: logging.Logger | None = None
-    logger_adapter: logging.LoggerAdapter = field(init=False)
+    logger: logging.Logger | None = field(default=None, repr=False)
+    logger_adapter: logging.LoggerAdapter = field(init=False, repr=False)
+    _wbw_env: WbEnvironment | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         makedirs(self.out_dir, exist_ok=True)
