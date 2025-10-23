@@ -51,6 +51,13 @@ _COLORS = {
     'ERROR': '\x1b[31m',  # red
     'CRITICAL': '\x1b[41m',  # red background
 }
+_COLORS_RICH = {
+    'DEBUG': 'cyan',
+    'INFO': 'green',
+    'WARNING': 'yellow',
+    'ERROR': 'red',
+    'CRITICAL': 'red',
+}
 
 
 class ColoredFormatter(logging.Formatter):
@@ -147,8 +154,17 @@ class RichDictHandler(logging.Handler):
     def __init__(self, logs: dict[str, str]):
         super().__init__()
         self.logs = logs
-        self.setFormatter(ColoredFormatter(fmt='[%(levelname)s] %(message)s'))
+        self.setFormatter(logging.Formatter(fmt='[%(levelname)s] %(message)s'))
         self.setLevel(logging.DEBUG)
+
+    def format(self, record: logging.LogRecord) -> str:
+        levelname = record.levelname
+        if levelname in _COLORS_RICH:
+            color = _COLORS_RICH[levelname]
+            record.levelname = f'[{color}]{levelname}[/{color}]'
+        formatted = super().format(record)
+        record.levelname = levelname
+        return formatted
 
     def emit(self, record: logging.LogRecord):
         msg = self.format(record)
