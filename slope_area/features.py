@@ -166,7 +166,7 @@ class Outlet:
     name: str | None = None
 
     def __str__(self) -> str:
-        return self.name
+        return self.name or ''
 
     def __repr__(self) -> str:
         return f'Outlet(geom={self.geom}, crs={self.crs.to_epsg()}, name={self.name})'
