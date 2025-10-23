@@ -21,7 +21,7 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import SAGA_RASTER_SUFFIX, get_wbw_env
 from slope_area._typing import Resolution
-from slope_area.config import WORKERS
+from slope_area.config import OUTLET_SNAP_DIST, TRIAL_WORKERS
 from slope_area.features import (
     VRT,
     DEMTiles,
@@ -85,7 +85,7 @@ class Builder(ABC):
                 redirect_stdout=True,
             ) as live:
                 with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=WORKERS
+                    max_workers=TRIAL_WORKERS
                 ) as executor:
                     futures = [
                         executor.submit(Trial.run, trial) for trial in trials
