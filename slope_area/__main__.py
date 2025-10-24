@@ -16,10 +16,9 @@ logger = create_logger(__name__)
 
 
 def main():
-    tiles = DEMTilesBuilder.build()
-    breakpoint()
+    DEMTilesBuilder.build()
     plot = 'resolution'
-    outlet_name = 'gully 10'
+    outlet_name = 'gully 12'
     generalized_dem = GeneralizedDEM(
         dem=GENERALIZED_DEM, out_dir=INTERIM_DATA_DIR / 'generalized_dem'
     )
