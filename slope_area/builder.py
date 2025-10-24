@@ -21,7 +21,11 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import SAGA_RASTER_SUFFIX, get_wbw_env
 from slope_area._typing import Resolution
-from slope_area.config import OUTLET_SNAP_DIST, TRIAL_WORKERS
+from slope_area.config import (
+    OUTLET_SNAP_DIST,
+    STREAM_FLOW_ACCUM_THRESHOLD,
+    TRIAL_WORKERS,
+)
 from slope_area.features import (
     VRT,
     DEMTiles,
@@ -253,7 +257,7 @@ class Trial:
         ).to_whitebox_vector()
         return hydro_analysis.compute_slope_gradient(
             wbw_outlet,
-            streams_flow_accum_threshold=0,
+            streams_flow_accum_threshold=STREAM_FLOW_ACCUM_THRESHOLD,
             outlet_snap_dist=100,
         )
 

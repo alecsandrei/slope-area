@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from slope_area.config import LOG_INTERVAL, MIN_GRADIENT, N_COLS
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
@@ -21,15 +22,13 @@ logger = create_logger(__name__)
 def slope_area_plot(
     area: np.ndarray,
     slope: np.ndarray,
-    loginterval: float = 0.25,
-    min_gradient: float = 0.01,
     **kwargs,
 ):
-    slope = np.clip(slope, a_min=min_gradient, a_max=None)
+    slope = np.clip(slope, a_min=MIN_GRADIENT, a_max=None)
     areamin = area.min() - 0.01
     areamax = area.max() + 1
     area_bins = 10 ** np.arange(
-        np.log10(areamin), np.log10(areamax) + loginterval, loginterval
+        np.log10(areamin), np.log10(areamax) + LOG_INTERVAL, LOG_INTERVAL
     )
     half_bin_widths = np.append(np.diff(area_bins) / 2, 0)
     acenters = area_bins + half_bin_widths
@@ -42,14 +41,14 @@ def slope_area_plot(
         mean_slopes.append(mean)
     acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
 
-    sns.scatterplot(
-        x='area',
-        y='slope',
-        data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
-        s=30,
-        alpha=0.2,
-        color='cyan',
-    )
+    # sns.scatterplot(
+    #    x='area',
+    #    y='slope',
+    #    data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
+    #    s=30,
+    #    alpha=0.2,
+    #    color='cyan',
+    # )
     # plt.vlines(
     #     area_bins,
     #     ymin=slope.min(),
@@ -73,15 +72,30 @@ def slope_area_plot(
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
+def get_col_wrap(n_unique: int):
+    for wrap in range(5, 2, -1):
+        if n_unique % wrap == 0:
+            col_wrap = wrap
+            break
+    else:
+        col_wrap = 5
+    logger.info('Infered %i cols for the plot' % col_wrap)
+    return col_wrap
+
+
 def slope_area_grid(data: pd.DataFrame, col: str, out_fig: Path):
     logger.info('Creating slope area plot.')
+    if N_COLS == -1:
+        col_wrap = get_col_wrap(data[col].nunique())
+    else:
+        col_wrap = N_COLS
     g = sns.FacetGrid(
         data,
         hue='slope_type',
         col=col,
         height=5,
         aspect=1,
-        col_wrap=min(data[col].unique().shape[0], 5),
+        col_wrap=col_wrap,
     )
     g.map(slope_area_plot, 'area', 'slope').set(xscale='log', yscale='log')
     g.set_axis_labels('Drainage area (m$^2$)', 'Slope (m/m)', fontsize=16)

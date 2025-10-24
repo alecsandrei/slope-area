@@ -17,6 +17,7 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 from slope_area import SAGA_ENV, WBW_ENV
 from slope_area.config import (
     INTERIM_DATA_DIR,
+    STREAM_FLOW_ACCUM_THRESHOLD,
 )
 from slope_area.logger import create_logger
 from slope_area.utils import (
@@ -178,8 +179,8 @@ class HydrologicAnalysis:
     def compute_slope_gradient(
         self,
         outlet: WhiteboxVector | PathLike,
-        streams_flow_accum_threshold: int = 100,
-        outlet_snap_dist: int | None = None,
+        streams_flow_accum_threshold: float = STREAM_FLOW_ACCUM_THRESHOLD,
+        outlet_snap_dist: float | None = None,
     ) -> SlopeGradientComputationOutput:
         write_whitebox_func = partial(
             write_whitebox,
