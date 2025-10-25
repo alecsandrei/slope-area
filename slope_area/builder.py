@@ -494,7 +494,6 @@ class Trial:
             self.log('Reading the profiles %s' % profiles.name)
             ret = TrialResult(gpd.read_file(profiles), self.config)
         except Exception as e:
-            raise e
             self.log(
                 'Trial failed with error: %s' % e,
                 level=logging.ERROR,
