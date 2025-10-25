@@ -2,54 +2,69 @@ from __future__ import annotations
 
 import geopandas as gpd
 
-from slope_area.builder import OutletPlotBuilder, ResolutionPlotBuilder, Trial
-from slope_area.config import (
-    GENERALIZED_DEM,
-    INTERIM_DATA_DIR,
-    RAW_DATA_DIR,
+from slope_area.builder import (
+    BuilderConfig,
+    DEMSource,
+    OutletPlotBuilder,
+    ResolutionPlotBuilder,
 )
-from slope_area.features import DEMTilesBuilder, Outlets
-from slope_area.geomorphometry import GeneralizedDEM
+from slope_area.config import PROJ_ROOT
+from slope_area.features import DEMTilesBuilder, GeneralizedDEM, Outlets
+from slope_area.geomorphometry import HydrologicAnalysisConfig
 from slope_area.logger import create_logger
 
 logger = create_logger(__name__)
 
 
 def main():
-    DEMTilesBuilder.build()
-    plot = 'resolution'
-    outlet_name = 'gully 12'
-    generalized_dem = GeneralizedDEM(
-        dem=GENERALIZED_DEM, out_dir=INTERIM_DATA_DIR / 'generalized_dem'
+    # ---- Paths ----
+    dem_dir = PROJ_ROOT / 'data' / 'raw' / 'DEM'
+    dem_tiles = PROJ_ROOT / 'data' / 'raw' / 'dem_tiles.fgb'
+    generalized_dem = PROJ_ROOT / 'data' / 'raw' / 'dem_30m.tif'
+    generalized_dem_out = (
+        PROJ_ROOT / 'data' / 'processed' / generalized_dem.stem
     )
-    resolutions = [(res, res) for res in range(1, 30)]
-    outlets_path = RAW_DATA_DIR / 'outlets.shp'
-    logger.info('Reading outlets at %s.' % outlets_path)
-    gdf = gpd.read_file(outlets_path).sort_values(by='name')
+    outlets = PROJ_ROOT / 'data' / 'raw' / 'outlets.shp'
+    dem_dir_epsg = 3844
+    out_dir = PROJ_ROOT / 'data' / 'processed'
+
+    # ---- Run configs ----
+    plot_kind = 'outlet'
+    outlet_name = 'gully 13'
+    resolutions = [(res, res) for res in range(5, 15)]
+
+    # ---- Init objects ----
+    tiles = DEMTilesBuilder(
+        dem_dir, dem_dir_epsg=dem_dir_epsg, tiles=dem_tiles
+    ).build()
+    generalized_dem = GeneralizedDEM(
+        path=generalized_dem, out_dir=generalized_dem_out
+    )
+    dem_source = DEMSource(dem_dir, tiles, generalized_dem)
+    hydrologic_analysis_config = HydrologicAnalysisConfig(
+        streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
+    )
+
+    logger.info('Reading outlets at %s' % outlets)
+    gdf = gpd.read_file(outlets).sort_values(by='name')
+    gdf = gdf[gdf['is_gully'] == 1].iloc[:5]
     outlets = Outlets.from_gdf(gdf, name_field='name')
 
-    if plot == 'resolution':
+    if plot_kind == 'resolution':
+        builder_config = BuilderConfig(
+            hydrologic_analysis_config, out_dir / outlet_name, max_workers=4
+        )
         outlet = [outlet for outlet in outlets if outlet.name == outlet_name]
         ResolutionPlotBuilder(
-            outlet[0],
-            resolutions,
-            generalized_dem=generalized_dem,
-            out_dir=INTERIM_DATA_DIR / outlet_name,
+            builder_config, dem_source, outlet[0], resolutions
         ).build()
-    elif plot == 'outlet':
+    elif plot_kind == 'outlet':
+        builder_config = BuilderConfig(
+            hydrologic_analysis_config, out_dir, max_workers=2
+        )
         OutletPlotBuilder(
-            outlets,
-            resolution=(20, 20),
-            generalized_dem=generalized_dem,
-            out_dir=INTERIM_DATA_DIR / 'outlets',
+            builder_config, dem_source, outlets=outlets, resolution=(5, 5)
         ).build()
-    else:
-        Trial(
-            [outlet for outlet in outlets if outlet.name == outlet_name][0],
-            INTERIM_DATA_DIR / outlet_name,
-            outlet_name,
-            (10, 10),
-        ).run()
 
 
 if __name__ == '__main__':

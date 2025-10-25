@@ -3,16 +3,16 @@ from __future__ import annotations
 from collections import UserList
 import collections.abc as c
 import concurrent.futures
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
+from functools import cache
 import logging
-from os import makedirs
+from os import fspath, makedirs
 from pathlib import Path
 import typing as t
 
 import geopandas as gpd
 import pyproj
 import rasterio as rio
-from rasterio import CRS
 from rasterio.warp import Resampling
 from rio_vrt import build_vrt
 import shapely
@@ -25,16 +25,15 @@ from whitebox_workflows import (
     VectorGeometry,
     VectorGeometryType,
 )
+from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import WBW_ENV
-from slope_area._typing import Resolution
-from slope_area.config import (
-    DEM_DIR,
-    DEM_DIR_EPSG,
-    DEM_TILES,
+from slope_area._typing import AnyLogger, Resolution
+from slope_area.geomorphometry import (
+    FlowAccumulationComputationOutput,
+    HydrologicAnalysis,
 )
-from slope_area.geomorphometry import GeneralizedDEM
 from slope_area.logger import create_logger
 from slope_area.utils import (
     redirect_warnings,
@@ -49,32 +48,131 @@ if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
 
-logger = create_logger(__name__)
+m_logger = create_logger(__name__)
 
 
-@dataclass
-class VRT:
-    path: Path
-    dem_tiles: DEMTiles
-    _logger: logging.Logger = field(init=False, repr=False)
+@dataclass(frozen=True)
+class DEMSource:
+    dem_dir: Path
+    tiles: Path
+    generalized_dem: GeneralizedDEM
 
-    def __post_init__(self):
-        self._logger = logger.getChild(self.__class__.__name__)
 
-    def resample[T: PathLike](self, out_file: T, res: Resolution) -> T:
-        crs = self.dem_tiles.gdf.crs.to_wkt()
-        rio_crs = CRS.from_string(crs)
+@dataclass(frozen=True, eq=True)
+class Raster:
+    path: PathLike
+
+    @property
+    def crs(self) -> pyproj.CRS:
+        with rio.open(self.path) as src:
+            return src.crs
+
+    def resample[T: PathLike](
+        self,
+        out_file: T,
+        resolution: Resolution,
+        crs: pyproj.CRS | None = None,
+        *,
+        logger: AnyLogger = m_logger,
+    ) -> T:
+        if crs is None:
+            crs = self.crs
         reproject_kwargs = {
-            'src_crs': rio_crs,
-            'dst_crs': rio_crs,
+            'src_crs': crs,
+            'dst_crs': crs,
             'resampling': Resampling.bilinear,
             'src_nodata': 0.0,
             'dst_nodata': -32767,
         }
-        self._logger.info('Resampling VRT %s at res=%s' % (self.path, res))
-        return resample(
-            self.path, out_file, res=res, kwargs_reproject=reproject_kwargs
+        logger.info(
+            'Resampling Raster %s at resolution=%s'
+            % (Path(self.path).name, resolution)
         )
+        return resample(
+            self.path,
+            out_file,
+            res=resolution,
+            kwargs_reproject=reproject_kwargs,
+        )
+
+
+@dataclass(frozen=True, eq=True)
+class VRT(Raster):
+    dem_tiles: DEMTiles
+
+    @classmethod
+    def from_dem_tiles(
+        cls, dem_tiles: DEMTiles, out_vrt: Path, *, logger: AnyLogger = m_logger
+    ) -> t.Self:
+        paths = [
+            Path(dem_tiles.dem_dir) / path for path in dem_tiles.gdf['path']
+        ]
+        logger.info('Building VRT from %i rasters' % len(paths))
+        return cls(build_vrt(out_vrt, paths), dem_tiles)
+
+
+@dataclass(frozen=True, eq=True)
+class GeneralizedDEM(Raster):
+    out_dir: PathLike
+
+    @property
+    def dem_preproc(self) -> WhiteboxRaster:
+        return self.get_flow_output().dem_preproc
+
+    @property
+    def d8_pointer(self) -> WhiteboxRaster:
+        return self.get_flow_output().d8_pointer
+
+    @property
+    def flow_accum(self) -> WhiteboxRaster:
+        return self.get_flow_output().flow_accumulation
+
+    def read_rasters(
+        self, rasters: c.Iterable[PathLike]
+    ) -> list[WhiteboxRaster]:
+        return [WBW_ENV.read_raster(fspath(raster)) for raster in rasters]
+
+    def compute_flow(self, prefix: str) -> FlowAccumulationComputationOutput:
+        hydro_analysis = HydrologicAnalysis(self.path, out_dir=self.out_dir)
+        output = hydro_analysis.compute_flow()
+        output.write_whitebox(
+            self.out_dir,
+            prefix=prefix,
+            overwrite=True,
+            logger=m_logger.getChild(self.__class__.__name__),
+        )
+        return output
+
+    def read_flow_output(
+        self, rasters: tuple[Path, Path, Path]
+    ) -> FlowAccumulationComputationOutput:
+        wbw_rasters = self.read_rasters(rasters)
+        return FlowAccumulationComputationOutput(*wbw_rasters)
+
+    def get_rasters(self, prefix: str) -> tuple[Path, Path, Path]:
+        out_dir = Path(self.out_dir)
+        return (
+            out_dir / f'{prefix}dem_preproc.tif',
+            out_dir / f'{prefix}d8_pointer.tif',
+            out_dir / f'{prefix}flow_accumulation.tif',
+        )
+
+    @cache
+    def get_flow_output(self) -> FlowAccumulationComputationOutput:
+        prefix = Path(self.path).stem + '_'
+        rasters = self.get_rasters(prefix)
+        if all(raster.exists() for raster in rasters):
+            m_logger.info(
+                'Found rasters %s'
+                % ', '.join([Path(raster).name for raster in rasters])
+            )
+            return self.read_flow_output(rasters)
+        else:
+            m_logger.info(
+                'Computing rasters %s'
+                % ', '.join([Path(raster).stem for raster in rasters])
+            )
+            return self.compute_flow(prefix)
 
 
 class Feature(t.TypedDict):
@@ -90,23 +188,29 @@ class FeatureCollection(t.TypedDict):
 
 @dataclass
 class DEMTilesBuilder:
-    @classmethod
-    def build(cls) -> None:
-        c_logger = logger.getChild(cls.__name__)
-        assert DEM_DIR.exists(), f'{DEM_DIR} does not exist'
+    dem_dir: PathLike
+    dem_dir_epsg: int
+    tiles: PathLike
+    _logger: logging.Logger = field(init=False, repr=False)
 
-        if DEM_TILES.exists():
-            c_logger.info('Found DEM tiles at %s' % DEM_TILES)
-            return None
+    def __post_init__(self):
+        self._logger = m_logger.getChild(self.__class__.__name__)
 
-        c_logger.info(
-            'Extracting raster boundaries from %s to %s' % (DEM_DIR, DEM_TILES)
+    def build(self) -> Path:
+        tiles = Path(self.tiles)
+        if tiles.exists():
+            self._logger.info('Found DEM tiles at %s' % self.tiles)
+            return tiles
+
+        self._logger.info(
+            'Extracting raster boundaries from %s to %s'
+            % (self.dem_dir, self.tiles)
         )
 
-        rasters = list(DEM_DIR.rglob('*.tif'))
+        rasters = list(Path(self.dem_dir).rglob('*.tif'))
         total = len(rasters)
         if not total:
-            raise FileNotFoundError(f'No .tif rasters found in {DEM_DIR}')
+            raise FileNotFoundError(f'No .tif rasters found in {self.dem_dir}')
 
         feature_coll: FeatureCollection = {
             'type': 'FeatureCollection',
@@ -115,7 +219,7 @@ class DEMTilesBuilder:
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
-                executor.submit(cls.get_feature, raster) for raster in rasters
+                executor.submit(self.get_feature, raster) for raster in rasters
             ]
 
             for i, future in enumerate(
@@ -124,27 +228,28 @@ class DEMTilesBuilder:
                 if not future.exception():
                     feature_coll['features'].append(future.result())
                 if i % 1000 == 0 or i == total:
-                    c_logger.info('Completed %i/%i rasters', i, total)
+                    self._logger.info('Completed %i/%i rasters', i, total)
 
-        gdf = gpd.GeoDataFrame.from_features(feature_coll, crs=DEM_DIR_EPSG)
-        logger.info('Saving DEM boundaries to %s' % DEM_TILES)
-        gdf.to_file(DEM_TILES)
+        gdf = gpd.GeoDataFrame.from_features(
+            feature_coll, crs=self.dem_dir_epsg
+        )
+        self._logger.info('Saving DEM boundaries to %s' % self.tiles)
+        gdf.to_file(self.tiles)
+        return tiles
 
-    @classmethod
-    def get_feature(cls, raster: Path) -> Feature:
+    def get_feature(self, raster: Path) -> Feature:
         return {
             'type': 'Feature',
-            'properties': {'path': raster.relative_to(DEM_DIR).as_posix()},
-            'geometry': cls.get_raster_bounds(raster),
+            'properties': {'path': raster.relative_to(self.dem_dir).as_posix()},
+            'geometry': self.get_raster_bounds(raster),
         }
 
-    @staticmethod
-    def get_raster_bounds(raster: Path) -> shapely.Polygon:
+    def get_raster_bounds(self, raster: Path) -> shapely.Polygon:
         try:
             with rio.open(raster) as src:
                 return shapely.box(*src.bounds)
         except Exception as e:
-            logger.error(
+            self._logger.error(
                 'Failed to compute the boundary of the raster %s' % raster
             )
             raise e
@@ -152,59 +257,66 @@ class DEMTilesBuilder:
 
 @dataclass
 class DEMTiles:
-    gdf: gpd.GeoDataFrame
-    _logger: logging.Logger = field(init=False, repr=False)
+    dem_dir: PathLike
+    gdf: gpd.GeoDataFrame = field(repr=False)
+    logger: InitVar[AnyLogger | None] = field(kw_only=True, default=None)
+    _logger: AnyLogger = field(init=False, repr=False)
 
-    def __post_init__(self):
-        self._logger = logger.getChild(self.__class__.__name__)
-
-    def build_vrt(self, out_vrt: PathLike) -> VRT:
-        paths = [DEM_DIR / path for path in self.gdf['path']]
-        self._logger.info('Building VRT from %i rasters.' % len(paths))
-        return VRT(build_vrt(out_vrt, paths), self)
+    def __post_init__(self, logger: AnyLogger | None):
+        self._logger = logger or m_logger.getChild(self.__class__.__name__)
 
     @classmethod
     def from_polygon(
-        cls, polygon: shapely.Polygon | shapely.MultiPolygon
+        cls,
+        dem_dir: PathLike,
+        tiles: PathLike,
+        polygon: shapely.Polygon | shapely.MultiPolygon,
+        *,
+        logger: AnyLogger | None = None,
     ) -> t.Self:
-        c_logger = logger.getChild(cls.__name__)
-        dem_tiles = gpd.read_file(DEM_TILES)
+        c_logger = m_logger.getChild(cls.__name__)
+        dem_tiles = gpd.read_file(tiles)
         subset = dem_tiles[dem_tiles.intersects(polygon)]
         c_logger.info(
             'Extracted %i tiles based on the polygon %r'
             % (subset.shape[0], polygon)
         )
-        return cls(subset)
+        return cls(dem_dir, subset, logger=logger)
 
     @classmethod
-    @timeit(logger, level=logging.INFO)
+    @timeit(m_logger, level=logging.INFO)
     def from_outlet(
         cls,
+        dem_source: DEMSource,
         outlet: Outlet,
-        generalized_dem: GeneralizedDEM,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
         wbw_env: WbEnvironment = WBW_ENV,
+        *,
+        logger: AnyLogger | None = None,
     ) -> t.Self:
         return cls._from_outlet_watershed(
+            dem_source,
             outlet,
-            generalized_dem=generalized_dem,
             out_dir=out_dir,
             outlet_snap_dist=outlet_snap_dist,
             wbw_env=wbw_env,
+            logger=logger,
         )
 
     @classmethod
     def _from_outlet_watershed(
         cls,
+        dem_source: DEMSource,
         outlet: Outlet,
-        generalized_dem: GeneralizedDEM,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
         wbw_env: WbEnvironment = WBW_ENV,
+        *,
+        logger: AnyLogger | None = None,
     ) -> t.Self:
-        c_logger = logger.getChild(cls.__name__)
-        c_logger.info('Infering DEM tiles based on the outlet.')
+        c_logger = m_logger.getChild(cls.__name__)
+        c_logger.info('Infering DEM tiles based on the outlet')
         out_dir = Path(out_dir)
         makedirs(out_dir, exist_ok=True)
 
@@ -214,11 +326,11 @@ class DEMTiles:
         # ---- Computing watershed ----
         wbw_outlet_snapped = wbw_env.snap_pour_points(
             wbw_outlet,
-            flow_accum=generalized_dem.flow_accum,
+            flow_accum=dem_source.generalized_dem.flow_accum,
             snap_dist=outlet_snap_dist,
         )
         watershed = wbw_env.watershed(
-            generalized_dem.d8_pointer, wbw_outlet_snapped
+            dem_source.generalized_dem.d8_pointer, wbw_outlet_snapped
         )
         watershed_vec = wbw_env.raster_to_vector_polygons(watershed)
         write_whitebox(
@@ -233,7 +345,9 @@ class DEMTiles:
                 .geometry.make_valid()
                 .iloc[0]
             )
-        return cls.from_polygon(watershed)
+        return cls.from_polygon(
+            dem_source.dem_dir, dem_source.tiles, watershed, logger=logger
+        )
 
 
 @dataclass(frozen=True, eq=True)
@@ -262,9 +376,9 @@ class Outlets(UserList[Outlet]):
         cls, gdf: gpd.GeoDataFrame, name_field: str | None = None
     ) -> t.Self:
         if gdf.empty:
-            raise ValueError('GeoDataFrame is empty — cannot create Outlets.')
+            raise ValueError('GeoDataFrame is empty — cannot create Outlets')
         if not all(isinstance(geom, shapely.Point) for geom in gdf.geometry):
-            raise TypeError('All geometries must be Points.')
+            raise TypeError('All geometries must be Points')
 
         crs = pyproj.CRS.from_user_input(gdf.crs)
         outlets = [

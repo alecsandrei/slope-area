@@ -19,7 +19,7 @@ from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area import WBW_ENV
-from slope_area._typing import Resolution
+from slope_area._typing import AnyLogger, Resolution
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
@@ -83,7 +83,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     output: T,
     out_file: Path,
     *,
-    logger: logging.Logger | None = None,
+    logger: AnyLogger | None = None,
     overwrite: bool = False,
     wbw_env: WbEnvironment = WBW_ENV,
 ) -> T:
@@ -97,14 +97,13 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
 
     if output.file_mode == 'r':
         logger.debug(
-            'Not saving %s as it is open in read-only.' % output.file_name
+            'Not saving %s as it is open in read-only' % output.file_name
         )
     elif out_file.exists() and not overwrite:
-        logger.debug('Not saving %s as overwrite is disabled.' % out_file_str)
+        logger.debug('Not saving %s as overwrite is disabled' % out_file_str)
     else:
         logger.info(
-            'Saving %s object to %s.'
-            % (output.__class__.__name__, out_file_str)
+            'Saving %s object to %s' % (output.__class__.__name__, out_file_str)
         )
         write_func()
         output.file_name = out_file_str
@@ -122,7 +121,7 @@ def extract_class_name_from_args(args) -> str | None:
     return cls_name
 
 
-def timeit(logger: logging.Logger | None = None, level: int = logging.INFO):
+def timeit(logger: AnyLogger | None = None, level: int = logging.INFO):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -146,10 +145,12 @@ def timeit(logger: logging.Logger | None = None, level: int = logging.INFO):
 
 
 @contextmanager
-def redirect_warnings_context():
+def silence_logger_stdout_stderr(parent_logger_name: str):
     parent_logger = logging.getLogger('slopeArea')
     original_handlers = parent_logger.handlers[:]
-    handlers = [logging.getHandlerByName('slopeAreaFile')]
+    file_handler = logging.getHandlerByName('slopeAreaFile')
+    assert file_handler is not None
+    handlers = [file_handler]
     parent_logger.handlers = handlers
     try:
         yield
@@ -180,7 +181,7 @@ def redirect_warnings(
 
     def showwarning(message, category, filename, lineno, file=None, line=None):
         if category is warning_category and filename == spec.origin:
-            with redirect_warnings_context():
+            with silence_logger_stdout_stderr('slopeArea'):
                 logger.warning(
                     str(message),
                     extra={

@@ -13,7 +13,9 @@ import threading
 import traceback
 import typing as t
 
+from slope_area._typing import RichTableLogs, TrialLoggingContext
 from slope_area.config import LOGGING_CONFIG, PROJ_ROOT
+from slope_area.enums import TrialStatus
 
 LOG_RECORD_BUILTIN_ATTRS = {
     'args',
@@ -57,6 +59,12 @@ _COLORS_RICH = {
     'WARNING': 'yellow',
     'ERROR': 'red',
     'CRITICAL': 'red',
+}
+_COLORS_TRIAL_STATUS = {
+    TrialStatus.NOT_STARTED: 'gray',
+    TrialStatus.RUNNING: 'cyan',
+    TrialStatus.FINISHED: 'green',
+    TrialStatus.ERRORED: 'red',
 }
 
 
@@ -131,10 +139,6 @@ class JSONFormatter(logging.Formatter):
         }
         message.update(always_fields)
 
-        for key, val in record.__dict__.items():
-            if key not in LOG_RECORD_BUILTIN_ATTRS:
-                message[key] = val
-
         return message
 
 
@@ -151,7 +155,7 @@ class ErrorFilter(logging.Filter):
 
 
 class RichDictHandler(logging.Handler):
-    def __init__(self, logs: dict[str, str]):
+    def __init__(self, logs: RichTableLogs):
         super().__init__()
         self.logs = logs
         self.setFormatter(logging.Formatter(fmt='[%(levelname)s] %(message)s'))
@@ -168,9 +172,25 @@ class RichDictHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord):
         msg = self.format(record)
-        trial_name = getattr(record, 'trialName', None)
-        assert trial_name is not None
-        self.logs[trial_name] = msg
+        trial_name: str = getattr(record, 'trialName')
+        trial_context: TrialLoggingContext | dict = getattr(
+            record, 'trialContext', {}
+        )
+
+        curr_data = self.logs[trial_name]
+
+        status: TrialStatus | None = trial_context.get('trialStatus', None)
+        exception: Exception | None = trial_context.get('trialException', None)
+
+        if msg:
+            curr_data.message = msg
+        if status is not None:
+            status_color = _COLORS_TRIAL_STATUS[status]
+            curr_data.status = (
+                f'[{status_color}]{status.display()}[/{status_color}]'
+            )
+        if exception is not None:
+            curr_data.exception = exception.__class__.__name__
 
 
 class MultiprocessingLog(logging.Handler):

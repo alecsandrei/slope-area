@@ -22,7 +22,9 @@
         "process_name": "processName",
         "warning_category": "warningCategory",
         "warning_filename": "warningFileName",
-        "warning_lineno": "warningLineNo"
+        "warning_lineno": "warningLineNo",
+        "trial_name": "trialName",
+        "trial_context": "trialContext"
       }
     }
   },
