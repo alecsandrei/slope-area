@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import typing as t
 
 import PySAGA_cmd
@@ -14,6 +15,7 @@ from slope_area.logger import (
     create_logger,
     setup_logging,
 )
+
 
 __all__ = [
     'ErrorFilter',
@@ -34,7 +36,7 @@ def get_wbw_env(logger: AnyLogger) -> WbEnvironment:
 
 
 def get_saga_env(logger: AnyLogger) -> PySAGA_cmd.SAGA:
-    env = PySAGA_cmd.SAGA('saga_cmd')
+    env = PySAGA_cmd.SAGA(os.environ.get('saga_cmd', 'saga_cmd'))
     logger.info('Initialized SAGAGIS Environment')
     return env
 
