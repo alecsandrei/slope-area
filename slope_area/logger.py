@@ -203,12 +203,12 @@ def silent_logs(*logger_names):
     for name in logger_names:
         logger = logging.getLogger(name)
         saved_handlers[name] = logger.handlers[:]
-        # Maybe leave slopeAreaFile?
+        # This leaves slopeAreaFile as a handler
         logger.handlers = [
             h
             for h in logger.handlers
             if not isinstance(h, logging.StreamHandler)
-            and not isinstance(h, logging.handlers.RotatingFileHandler)
+            or isinstance(h, logging.handlers.RotatingFileHandler)
         ]
     try:
         yield
