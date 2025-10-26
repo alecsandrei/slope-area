@@ -3,12 +3,12 @@
   "disable_existing_loggers": false,
   "formatters": {
     "colored": {
-      "()": "slope_area.ColoredFormatter",
+      "()": "slope_area.logger.ColoredFormatter",
       "fmt": "%(asctime)s %(levelname)s %(name)s %(funcName)20s(): %(message)s",
       "datefmt": "%H:%M:%S"
     },
     "json": {
-      "()": "slope_area.JSONFormatter",
+      "()": "slope_area.logger.JSONFormatter",
       "fmt_keys": {
         "level": "levelname",
         "message": "message",
@@ -30,10 +30,10 @@
   },
   "filters": {
     "no_errors": {
-      "()": "slope_area.NonErrorFilter"
+      "()": "slope_area.logger.NonErrorFilter"
     },
     "errors": {
-      "()": "slope_area.ErrorFilter"
+      "()": "slope_area.logger.ErrorFilter"
     }
   },
   "handlers": {

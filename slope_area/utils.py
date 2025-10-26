@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from contextlib import contextmanager
 import copy
 from functools import partial, wraps
@@ -18,8 +19,8 @@ from rasterio.warp import Resampling
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area import WBW_ENV
 from slope_area._typing import AnyLogger, Resolution
+from slope_area.config import IS_NOTEBOOK, get_wbw_env
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
@@ -27,7 +28,7 @@ if t.TYPE_CHECKING:
 
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
-logger = create_logger(__name__)
+m_logger = create_logger(__name__)
 
 
 def resample[T: PathLike](
@@ -85,8 +86,10 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     *,
     logger: AnyLogger | None = None,
     overwrite: bool = False,
-    wbw_env: WbEnvironment = WBW_ENV,
+    wbw_env: WbEnvironment | None = None,
 ) -> T:
+    if wbw_env is None:
+        wbw_env = get_wbw_env(logger)
     out_file_str = os.fspath(out_file)
     if logger is None:
         logger = create_logger(__name__)
@@ -202,8 +205,15 @@ def redirect_warnings(
 
 
 @contextmanager
-def suppress_stdout_stderr():
-    # Save original file descriptors
+def suppress_stdout_stderr_notebook():
+    # This func not yet tested
+    with open(os.devnull, 'w') as f:
+        with contextlib.redirect_stdout(f) and contextlib.redirect_stderr(f):
+            yield
+
+
+@contextmanager
+def suppress_stdout_stderr_terminal():
     stdout_fd = sys.stdout.fileno()
     stderr_fd = sys.stderr.fileno()
     old_stdout = os.dup(stdout_fd)
@@ -221,3 +231,13 @@ def suppress_stdout_stderr():
             os.dup2(old_stderr, stderr_fd)
             os.close(old_stdout)
             os.close(old_stderr)
+
+
+@contextmanager
+def suppress_stdout_stderr():
+    if IS_NOTEBOOK:
+        with suppress_stdout_stderr_notebook():
+            yield
+    else:
+        with suppress_stdout_stderr_terminal():
+            yield

@@ -13,7 +13,6 @@ type AnyLogger = logging.Logger | logging.LoggerAdapter
 
 type Resolution[T: (int, float)] = tuple[T, T]
 
-type Message = str
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
 

@@ -28,8 +28,8 @@ from whitebox_workflows import (
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area import WBW_ENV
 from slope_area._typing import AnyLogger, Resolution
+from slope_area.config import get_wbw_env
 from slope_area.geomorphometry import (
     FlowAccumulationComputationOutput,
     HydrologicAnalysis,
@@ -130,7 +130,7 @@ class GeneralizedDEM(Raster):
     def read_rasters(
         self, rasters: c.Iterable[PathLike]
     ) -> list[WhiteboxRaster]:
-        return [WBW_ENV.read_raster(fspath(raster)) for raster in rasters]
+        return [get_wbw_env().read_raster(fspath(raster)) for raster in rasters]
 
     def compute_flow(self, prefix: str) -> FlowAccumulationComputationOutput:
         hydro_analysis = HydrologicAnalysis(self.path, out_dir=self.out_dir)
@@ -291,7 +291,7 @@ class DEMTiles:
         outlet: Outlet,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
-        wbw_env: WbEnvironment = WBW_ENV,
+        wbw_env: WbEnvironment | None = None,
         *,
         logger: AnyLogger | None = None,
     ) -> t.Self:
@@ -311,12 +311,14 @@ class DEMTiles:
         outlet: Outlet,
         out_dir: PathLike,
         outlet_snap_dist: int = 100,
-        wbw_env: WbEnvironment = WBW_ENV,
+        wbw_env: WbEnvironment | None = None,
         *,
         logger: AnyLogger | None = None,
     ) -> t.Self:
-        c_logger = m_logger.getChild(cls.__name__)
-        c_logger.info('Infering DEM tiles based on the outlet')
+        logger = logger or m_logger.getChild(cls.__name__)
+        if wbw_env is None:
+            wbw_env = get_wbw_env(logger)
+        logger.info('Infering DEM tiles based on the outlet')
         out_dir = Path(out_dir)
         makedirs(out_dir, exist_ok=True)
 
@@ -336,10 +338,10 @@ class DEMTiles:
         write_whitebox(
             watershed_vec,
             out_dir / 'watershed.shp',
-            logger=c_logger,
+            logger=logger,
             overwrite=True,
         )
-        with redirect_warnings(c_logger, RuntimeWarning, 'pyogrio.raw'):
+        with redirect_warnings(logger, RuntimeWarning, 'pyogrio.raw'):
             watershed = (
                 gpd.read_file(watershed_vec.file_name)
                 .geometry.make_valid()
@@ -392,7 +394,7 @@ class Outlets(UserList[Outlet]):
         return cls(outlets, crs=crs)
 
     def to_whitebox_vector(self) -> WhiteboxVector:
-        vector = WBW_ENV.new_vector(
+        vector = get_wbw_env().new_vector(
             VectorGeometryType.Point,
             [
                 AttributeField(  # type: ignore

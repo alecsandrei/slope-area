@@ -8,10 +8,10 @@ from slope_area.builder import (
     OutletPlotBuilder,
     ResolutionPlotBuilder,
 )
-from slope_area.config import PROJ_ROOT
 from slope_area.features import DEMTilesBuilder, GeneralizedDEM, Outlets
 from slope_area.geomorphometry import HydrologicAnalysisConfig
 from slope_area.logger import create_logger
+from slope_area.paths import PROJ_ROOT
 
 logger = create_logger(__name__)
 
@@ -29,7 +29,7 @@ def main():
     out_dir = PROJ_ROOT / 'data' / 'processed'
 
     # ---- Run configs ----
-    plot_kind = 'outlet'
+    plot_kind = 'resolution'
     outlet_name = 'gully 13'
     resolutions = [(res, res) for res in range(5, 15)]
 

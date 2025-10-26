@@ -6,13 +6,18 @@ import concurrent.futures
 from dataclasses import astuple, dataclass, field, fields
 from functools import cached_property
 import logging
+from logging.handlers import QueueHandler
+import multiprocessing
 from os import PathLike, fspath, makedirs
 from pathlib import Path
+import queue
+import threading
 import time
 import typing as t
 
 from geopandas import gpd
 import pandas as pd
+import PySAGA_cmd
 from PySAGA_cmd import Raster as SAGARaster
 from rich import box
 from rich.live import Live
@@ -20,12 +25,17 @@ from rich.table import Table
 from whitebox_workflows import WbEnvironment
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area import SAGA_RASTER_SUFFIX, get_wbw_env
 from slope_area._typing import (
     AnyLogger,
     Resolution,
     RichTableLogs,
     TrialLoggingContext,
+)
+from slope_area.config import (
+    IS_NOTEBOOK,
+    get_saga_env,
+    get_saga_raster_suffix,
+    get_wbw_env,
 )
 from slope_area.enums import TrialStatus
 from slope_area.features import (
@@ -43,7 +53,6 @@ from slope_area.geomorphometry import (
     compute_slope,
 )
 from slope_area.logger import (
-    MultiprocessingLog,
     RichDictHandler,
     create_logger,
 )
@@ -79,11 +88,12 @@ def make_table(logs: RichTableLogs) -> Table:
     return table
 
 
-def create_rich_logger(logger_name: str, logs: RichTableLogs) -> logging.Logger:
+def create_rich_logger(
+    logger_name: str, logs: RichTableLogs, q: queue.Queue
+) -> logging.Logger:
     r_logger = m_logger.getChild(logger_name)
-    rich_handler = RichDictHandler(logs)
-    handler = MultiprocessingLog([rich_handler])
-    r_logger.addHandler(handler)
+    rich_handler = RichDictHandler(logs, q)
+    r_logger.addHandler(rich_handler)
     return r_logger
 
 
@@ -97,6 +107,14 @@ class BuilderConfig:
         makedirs(self.out_dir, exist_ok=True)
 
 
+def rich_table_logs_thread(logs: RichTableLogs, q: queue.Queue):
+    while True:
+        trial_log: RichTableLogs = q.get()
+        if trial_log is None:
+            break
+        logs.update(trial_log)
+
+
 @dataclass
 class Builder(ABC):
     config: BuilderConfig
@@ -106,7 +124,7 @@ class Builder(ABC):
     def trial_names(self) -> list[str]: ...
 
     @abstractmethod
-    def get_trials(self, *, logger: logging.Logger) -> list[Trial]: ...
+    def get_trials(self) -> list[Trial]: ...
 
     @abstractmethod
     def save_plot(self, trial_results: list[TrialResult]): ...
@@ -114,22 +132,33 @@ class Builder(ABC):
     def run_trials(
         self, trials: c.Iterable[Trial], logs: RichTableLogs
     ) -> list[concurrent.futures.Future[TrialResult]]:
-        # Silence logs. Otherwise stdout would be filled with other messages
-        with silence_logger_stdout_stderr('slopeArea'):
-            with Live(
+        with (
+            Live(
                 make_table(logs),
                 refresh_per_second=10,
                 redirect_stderr=True,
                 redirect_stdout=True,
-            ) as live:
-                with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=self.config.max_workers
-                ) as executor:
-                    futures = [executor.submit(trial.run) for trial in trials]
-                    while any(f.running() for f in futures):
-                        live.update(make_table(logs))
-                        time.sleep(0.1)
-                    live.update(make_table(logs))
+            ) as live,
+            silence_logger_stdout_stderr('slopeArea'),
+        ):
+            q = TrialQueue()
+            make_table_thread = threading.Thread(
+                target=rich_table_logs_thread,
+                args=(logs, q.rich),
+            )
+            make_table_thread.start()
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=self.config.max_workers
+            ) as executor:
+                futures = [
+                    executor.submit(trial.run, q, logs) for trial in trials
+                ]
+                while any(f.running() for f in futures):
+                    live.update(make_table(logs), refresh=IS_NOTEBOOK)
+                    time.sleep(0.1)
+                live.update(make_table(logs), refresh=IS_NOTEBOOK)
+            q.rich.put(None)
+            make_table_thread.join()
         return futures
 
     @staticmethod
@@ -148,8 +177,8 @@ class Builder(ABC):
             name: self.get_default_log_for_trial(name)
             for name in self.trial_names
         }
-        m_logger = create_rich_logger(self.__class__.__name__, logs)
-        trials = self.get_trials(logger=m_logger)
+        # m_logger = create_rich_logger(self.__class__.__name__, logs)
+        trials = self.get_trials()
         futures = self.run_trials(trials, logs)
         trial_results = [
             future.result() for future in futures if future.exception() is None
@@ -180,7 +209,7 @@ class ResolutionPlotBuilder(Builder):
             f'{resolution[0]} {unit_name}' for resolution in self.resolutions
         ]
 
-    def get_trials(self, logger: logging.Logger) -> list[Trial]:
+    def get_trials(self) -> list[Trial]:
         vrt = self.get_vrt()
         return [
             Trial(
@@ -192,7 +221,7 @@ class ResolutionPlotBuilder(Builder):
                     dem_provider=StaticVRT(vrt),
                     out_dir=self.config.out_dir / trial_name,
                 ),
-                logger=logger,
+                # logger=logger,
             )
             for trial_name, resolution in zip(
                 self.trial_names, self.resolutions
@@ -206,6 +235,15 @@ class ResolutionPlotBuilder(Builder):
             out_fig=self.config.out_dir / 'slope_area.png',
             config=SlopeAreaPlotConfig(),
         )
+
+
+def get_default_log_for_trial(trial_name: str) -> RichTableRowData:
+    return RichTableRowData(
+        trial=trial_name,
+        message='[dim]Waiting...[/dim]',
+        status=TrialStatus.NOT_STARTED.display(),
+        exception='',
+    )
 
 
 @dataclass
@@ -229,7 +267,7 @@ class OutletPlotBuilder(Builder):
 
         return VRT.from_dem_tiles(dem_tiles, self.config.out_dir / 'dem.vrt')
 
-    def get_trials(self, logger: logging.Logger) -> list[Trial]:
+    def get_trials(self) -> list[Trial]:
         return [
             Trial(
                 config=TrialConfig(
@@ -245,7 +283,7 @@ class OutletPlotBuilder(Builder):
                     hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                     out_dir=self.config.out_dir / trial_name,
                 ),
-                logger=logger,
+                # logger=logger,
             )
             for trial_name, outlet in zip(self.trial_names, self.outlets)
         ]
@@ -316,6 +354,16 @@ class TrialConfig:
         makedirs(self.out_dir, exist_ok=True)
 
 
+@dataclass(init=False)
+class TrialQueue:
+    rich: queue.Queue
+    logging: queue.Queue
+
+    def __init__(self):
+        self.rich = multiprocessing.Manager().Queue(-1)
+        self.logging = multiprocessing.Manager().Queue(-1)
+
+
 class TrialLoggerAdapter(logging.LoggerAdapter):
     def __init__(
         self,
@@ -340,22 +388,24 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
 @dataclass
 class Trial:
     config: TrialConfig
-    logger: logging.Logger | None = field(default=None, repr=False)
+    logger: logging.Logger | None = field(init=False, repr=False)
     logger_adapter: TrialLoggerAdapter = field(init=False, repr=False)
     _wbw_env: WbEnvironment | None = field(init=False, default=None, repr=False)
-
-    def __post_init__(self):
-        if self.logger is None:
-            self.logger = create_logger(__name__)
-        self.logger_adapter = TrialLoggerAdapter(
-            self.logger, trial_name=self.config.name
-        )
+    _saga_env: PySAGA_cmd.SAGA | None = field(
+        init=False, default=None, repr=False
+    )
 
     @property
     def wbw_env(self) -> WbEnvironment:
         if self._wbw_env is None:
             self._wbw_env = get_wbw_env(self.logger_adapter)
         return self._wbw_env
+
+    @property
+    def saga_env(self) -> PySAGA_cmd.SAGA:
+        if self._saga_env is None:
+            self._saga_env = get_saga_env(self.logger_adapter)
+        return self._saga_env
 
     def get_resampled_dem(self, raster: Raster) -> Path:
         dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
@@ -376,9 +426,14 @@ class Trial:
 
     def get_3x3_slope(self, dem: Path) -> SAGARaster:
         slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
-            SAGA_RASTER_SUFFIX
+            get_saga_raster_suffix(self.saga_env)
         )
-        return compute_slope(dem, slope_3x3_path, logger=self.logger_adapter)
+        return compute_slope(
+            dem,
+            slope_3x3_path,
+            saga_env=self.saga_env,
+            logger=self.logger_adapter,
+        )
 
     def get_slope_gradient(self, dem: Path) -> SlopeGradientComputationOutput:
         hydro_analysis = HydrologicAnalysis(
@@ -427,7 +482,6 @@ class Trial:
 
     def get_profiles(
         self,
-        dem: Path,
         slope_3x3: SAGARaster,
         slope_grad: SlopeGradientComputationOutput,
         streams: WhiteboxVector,
@@ -469,7 +523,20 @@ class Trial:
         self.logger_adapter.trial_context.update(context)
         self.logger_adapter.log(level=level, msg=msg, stacklevel=2)
 
-    def run(self) -> TrialResult:
+    def set_logger(self, q: TrialQueue, default_logs: RichTableLogs):
+        qh = QueueHandler(q.logging)
+        logger = create_rich_logger(
+            self.__class__.__name__, default_logs, q.rich
+        )
+        logger.addHandler(qh)
+        logger.setLevel(logging.DEBUG)
+        self.logger = logger
+        self.logger_adapter = TrialLoggerAdapter(
+            self.logger, trial_name=self.config.name
+        )
+
+    def run(self, q: TrialQueue, default_logs: RichTableLogs) -> TrialResult:
+        self.set_logger(q, default_logs)
         try:
             self.log(status=TrialStatus.RUNNING)
             self.log('Getting the DEM raster')
@@ -488,9 +555,7 @@ class Trial:
             self.log('Computing slope gradient')
             streams = self.get_streams_as_points(slope_grad)
             self.log('Generating profiles from stream network')
-            profiles = self.get_profiles(
-                dem_resampled, slope_3x3, slope_grad, streams
-            )
+            profiles = self.get_profiles(slope_3x3, slope_grad, streams)
             self.log('Reading the profiles %s' % profiles.name)
             ret = TrialResult(gpd.read_file(profiles), self.config)
         except Exception as e:

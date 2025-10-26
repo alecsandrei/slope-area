@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-import collections.abc as c
 from contextlib import contextmanager
 import datetime as dt
 import json
 import logging
 import logging.config
 import logging.handlers
-import multiprocessing
+import queue
 import sys
-import threading
-import traceback
 import typing as t
 
 from slope_area._typing import RichTableLogs, TrialLoggingContext
-from slope_area.config import LOGGING_CONFIG, PROJ_ROOT
 from slope_area.enums import TrialStatus
+from slope_area.paths import LOGGING_CONFIG, PROJ_ROOT
 
 LOG_RECORD_BUILTIN_ATTRS = {
     'args',
@@ -155,8 +152,9 @@ class ErrorFilter(logging.Filter):
 
 
 class RichDictHandler(logging.Handler):
-    def __init__(self, logs: RichTableLogs):
+    def __init__(self, logs: RichTableLogs, queue: queue.Queue):
         super().__init__()
+        self.queue = queue
         self.logs = logs
         self.setFormatter(logging.Formatter(fmt='[%(levelname)s] %(message)s'))
         self.setLevel(logging.DEBUG)
@@ -191,58 +189,7 @@ class RichDictHandler(logging.Handler):
             )
         if exception is not None:
             curr_data.exception = exception.__class__.__name__
-
-
-class MultiprocessingLog(logging.Handler):
-    """Mostly based on https://stackoverflow.com/a/894284"""
-
-    def __init__(self, handlers: c.Sequence[logging.Handler] | None = None):
-        super().__init__()
-
-        if handlers is None:
-            handler = logging.getHandlerByName('slopeAreaFile')
-            assert handler is not None
-            handlers = [handler]
-        self.handlers = handlers
-        self.queue: multiprocessing.Queue[logging.LogRecord] = (
-            multiprocessing.Queue(-1)
-        )
-        t = threading.Thread(target=self.receive)
-        t.daemon = True
-        t.start()
-
-    def receive(self):
-        while True:
-            try:
-                record = self.queue.get()
-                for handler in self.handlers:
-                    handler.emit(record)
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except EOFError:
-                break
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-
-    def send(self, s: logging.LogRecord):
-        self.queue.put_nowait(s)
-
-    def emit(self, record: logging.LogRecord):
-        try:
-            self.send(record)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            self.handleError(record)
-
-
-def setup_logging():
-    with LOGGING_CONFIG.open() as file:
-        config = json.load(file)
-    config['handlers']['slopeAreaFile']['filename'] = (
-        PROJ_ROOT / config['handlers']['slopeAreaFile']['filename']
-    ).as_posix()
-    logging.config.dictConfig(config)
+        self.queue.put_nowait({trial_name: curr_data})
 
 
 def create_logger(name: str) -> logging.Logger:
@@ -267,3 +214,12 @@ def silent_logs(*logger_names):
     finally:
         for name, handlers in saved_handlers.items():
             logging.getLogger(name).handlers = handlers
+
+
+def setup_logging():
+    with LOGGING_CONFIG.open() as file:
+        config = json.load(file)
+    config['handlers']['slopeAreaFile']['filename'] = (
+        PROJ_ROOT / config['handlers']['slopeAreaFile']['filename']
+    ).as_posix()
+    logging.config.dictConfig(config)

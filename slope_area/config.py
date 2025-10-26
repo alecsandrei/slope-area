@@ -1,7 +1,53 @@
 from __future__ import annotations
 
-from pathlib import Path
+from functools import cache
+import os
+import sys
+import typing as t
 
-# Paths
-PROJ_ROOT = Path(__file__).resolve().parents[1]
-LOGGING_CONFIG = PROJ_ROOT / 'logging' / 'config.json'
+import PySAGA_cmd
+import whitebox_workflows as wbw
+
+from slope_area._typing import AnyLogger
+from slope_area.logger import create_logger
+
+if t.TYPE_CHECKING:
+    from whitebox_workflows.whitebox_workflows import WbEnvironment
+
+m_logger = create_logger(__name__)
+
+
+@cache
+def get_wbw_env(logger: AnyLogger = m_logger) -> WbEnvironment:
+    env: WbEnvironment = wbw.WbEnvironment()
+    env.verbose = False
+    logger.info('Initialized Whitebox Environment')
+    return env
+
+
+@cache
+def get_saga_env(logger: AnyLogger = m_logger) -> PySAGA_cmd.SAGA:
+    env = PySAGA_cmd.SAGA(os.environ.get('saga_cmd', 'saga_cmd'))
+    logger.info('Initialized SAGAGIS Environment')
+    return env
+
+
+def get_saga_raster_suffix(saga: PySAGA_cmd.SAGA) -> str:
+    if saga.version is None or saga.version.major <= 8:
+        return '.sdat'
+    else:
+        return '.tif'
+
+
+def is_notebook(logger: AnyLogger):
+    try:
+        ipython = sys.modules['IPython']
+        config = ipython.get_ipython().config
+        config.get('IPKernelApp')
+        m_logger.debug('Code is running in notebook')
+        return True
+    except Exception:
+        return False
+
+
+IS_NOTEBOOK = is_notebook(m_logger)
