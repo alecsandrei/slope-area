@@ -208,6 +208,7 @@ def silent_logs(*logger_names):
             h
             for h in logger.handlers
             if not isinstance(h, logging.StreamHandler)
+            and not isinstance(h, logging.handlers.RotatingFileHandler)
         ]
     try:
         yield

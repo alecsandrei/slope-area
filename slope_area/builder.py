@@ -55,6 +55,7 @@ from slope_area.geomorphometry import (
 from slope_area.logger import (
     RichDictHandler,
     create_logger,
+    silent_logs,
 )
 from slope_area.plot import (
     SlopeAreaPlotConfig,
@@ -63,7 +64,6 @@ from slope_area.plot import (
 )
 from slope_area.utils import (
     redirect_warnings,
-    silence_logger_stdout_stderr,
     write_whitebox,
 )
 
@@ -139,7 +139,6 @@ class Builder(ABC):
                 redirect_stderr=True,
                 redirect_stdout=True,
             ) as live,
-            silence_logger_stdout_stderr('slopeArea'),
         ):
             q = TrialQueue()
             make_table_thread = threading.Thread(
@@ -535,42 +534,46 @@ class Trial:
             self.logger, trial_name=self.config.name
         )
 
+    def execute(self) -> TrialResult:
+        self.log(status=TrialStatus.RUNNING)
+        self.log('Getting the DEM raster')
+        dem = self.config.dem_provider.get_dem(
+            wbw_env=self.wbw_env, logger=self.logger_adapter
+        )
+        self.log(
+            'Resampling DEM %s to resolution %s'
+            % (Path(dem.path).name, self.config.resolution)
+        )
+        dem_resampled = self.get_resampled_dem(dem)
+        self.log('Computing 3x3 slope')
+        slope_grad = self.get_slope_gradient(dem_resampled)
+        self.log('Generating stream network')
+        slope_3x3 = self.get_3x3_slope(dem_resampled)
+        self.log('Computing slope gradient')
+        streams = self.get_streams_as_points(slope_grad)
+        self.log('Generating profiles from stream network')
+        profiles = self.get_profiles(slope_3x3, slope_grad, streams)
+        self.log('Reading the profiles %s' % profiles.name)
+        return TrialResult(gpd.read_file(profiles), self.config)
+
     def run(self, q: TrialQueue, default_logs: RichTableLogs) -> TrialResult:
         self.set_logger(q, default_logs)
-        try:
-            self.log(status=TrialStatus.RUNNING)
-            self.log('Getting the DEM raster')
-            dem = self.config.dem_provider.get_dem(
-                wbw_env=self.wbw_env, logger=self.logger_adapter
-            )
-            self.log(
-                'Resampling DEM %s to resolution %s'
-                % (Path(dem.path).name, self.config.resolution)
-            )
-            dem_resampled = self.get_resampled_dem(dem)
-            self.log('Computing 3x3 slope')
-            slope_grad = self.get_slope_gradient(dem_resampled)
-            self.log('Generating stream network')
-            slope_3x3 = self.get_3x3_slope(dem_resampled)
-            self.log('Computing slope gradient')
-            streams = self.get_streams_as_points(slope_grad)
-            self.log('Generating profiles from stream network')
-            profiles = self.get_profiles(slope_3x3, slope_grad, streams)
-            self.log('Reading the profiles %s' % profiles.name)
-            ret = TrialResult(gpd.read_file(profiles), self.config)
-        except Exception as e:
-            self.log(
-                'Trial failed with error: %s' % e,
-                level=logging.ERROR,
-                status=TrialStatus.ERRORED,
-                exception=e,
-            )
-            raise e
-        else:
-            self.log(
-                'Trial finished with success!', status=TrialStatus.FINISHED
-            )
-            return ret
+        with silent_logs('slopeArea'):
+            try:
+                ret = self.execute()
+            except Exception as e:
+                self.log(
+                    'Trial failed with error: %s' % e,
+                    level=logging.ERROR,
+                    status=TrialStatus.ERRORED,
+                    exception=e,
+                )
+                raise e
+            else:
+                self.log(
+                    'Trial finished with success!', status=TrialStatus.FINISHED
+                )
+                return ret
 
 
 @dataclass
