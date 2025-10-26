@@ -7,8 +7,17 @@ from slope_area.builder import (
     DEMSource,
     OutletPlotBuilder,
     ResolutionPlotBuilder,
+    StaticVRT,
+    Trial,
+    TrialConfig,
 )
-from slope_area.features import DEMTilesBuilder, GeneralizedDEM, Outlets
+from slope_area.features import (
+    VRT,
+    DEMTiles,
+    DEMTilesBuilder,
+    GeneralizedDEM,
+    Outlets,
+)
 from slope_area.geomorphometry import HydrologicAnalysisConfig
 from slope_area.logger import create_logger
 from slope_area.paths import PROJ_ROOT
@@ -47,7 +56,7 @@ def main():
 
     logger.info('Reading outlets at %s' % outlets)
     gdf = gpd.read_file(outlets).sort_values(by='name')
-    gdf = gdf[gdf['is_gully'] == 1].iloc[:5]
+    gdf = gdf[gdf['is_gully'] == 1]
     outlets = Outlets.from_gdf(gdf, name_field='name')
 
     if plot_kind == 'resolution':
@@ -65,6 +74,29 @@ def main():
         OutletPlotBuilder(
             builder_config, dem_source, outlets=outlets, resolution=(5, 5)
         ).build()
+    else:
+        outlet = outlets[0]
+        out_dir = out_dir / outlet.name
+        trial = Trial(
+            TrialConfig(
+                name=outlet.name,
+                outlet=outlets[0],
+                resolution=(10, 10),
+                hydrologic_analysis_config=hydrologic_analysis_config,
+                dem_provider=StaticVRT(
+                    VRT.from_dem_tiles(
+                        DEMTiles.from_outlet(
+                            dem_source,
+                            outlet,
+                            out_dir,
+                            hydrologic_analysis_config.outlet_snap_distance,
+                        ),
+                        out_dir / 'dem.vrt',
+                    )
+                ),
+                out_dir=out_dir,
+            )
+        ).run()
 
 
 if __name__ == '__main__':

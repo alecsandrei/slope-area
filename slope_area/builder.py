@@ -150,7 +150,8 @@ class Builder(ABC):
                 max_workers=self.config.max_workers
             ) as executor:
                 futures = [
-                    executor.submit(trial.run, q, logs) for trial in trials
+                    executor.submit(trial.run_multiprocess, q, logs)
+                    for trial in trials
                 ]
                 while any(f.running() for f in futures):
                     live.update(make_table(logs), refresh=IS_NOTEBOOK)
@@ -387,7 +388,7 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
 @dataclass
 class Trial:
     config: TrialConfig
-    logger: logging.Logger | None = field(init=False, repr=False)
+    logger: logging.Logger | None = field(default=None, repr=False)
     logger_adapter: TrialLoggerAdapter = field(init=False, repr=False)
     _wbw_env: WbEnvironment | None = field(init=False, default=None, repr=False)
     _saga_env: PySAGA_cmd.SAGA | None = field(
@@ -485,6 +486,7 @@ class Trial:
         slope_grad: SlopeGradientComputationOutput,
         streams: WhiteboxVector,
     ) -> Path:
+        self.log('Generating profiles from stream network')
         profiles_path = self.config.out_dir / 'profiles.shp'
         rasters = {
             'slope': self.wbw_env.read_raster(fspath(slope_3x3.path)),
@@ -522,7 +524,9 @@ class Trial:
         self.logger_adapter.trial_context.update(context)
         self.logger_adapter.log(level=level, msg=msg, stacklevel=2)
 
-    def set_logger(self, q: TrialQueue, default_logs: RichTableLogs):
+    def set_logger_multiprocess(
+        self, q: TrialQueue, default_logs: RichTableLogs
+    ):
         qh = QueueHandler(q.logging)
         logger = create_rich_logger(
             self.__class__.__name__, default_logs, q.rich
@@ -534,46 +538,53 @@ class Trial:
             self.logger, trial_name=self.config.name
         )
 
+    def set_logger(self):
+        if self.logger is None:
+            logger = m_logger.getChild(self.__class__.__name__)
+            self.logger = logger
+        self.logger_adapter = TrialLoggerAdapter(
+            self.logger, trial_name=self.config.name
+        )
+
     def execute(self) -> TrialResult:
         self.log(status=TrialStatus.RUNNING)
         self.log('Getting the DEM raster')
         dem = self.config.dem_provider.get_dem(
             wbw_env=self.wbw_env, logger=self.logger_adapter
         )
-        self.log(
-            'Resampling DEM %s to resolution %s'
-            % (Path(dem.path).name, self.config.resolution)
-        )
         dem_resampled = self.get_resampled_dem(dem)
-        self.log('Computing 3x3 slope')
         slope_grad = self.get_slope_gradient(dem_resampled)
-        self.log('Generating stream network')
         slope_3x3 = self.get_3x3_slope(dem_resampled)
-        self.log('Computing slope gradient')
         streams = self.get_streams_as_points(slope_grad)
-        self.log('Generating profiles from stream network')
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)
         self.log('Reading the profiles %s' % profiles.name)
         return TrialResult(gpd.read_file(profiles), self.config)
 
-    def run(self, q: TrialQueue, default_logs: RichTableLogs) -> TrialResult:
-        self.set_logger(q, default_logs)
+    def run_multiprocess(
+        self, q: TrialQueue, default_logs: RichTableLogs
+    ) -> TrialResult:
+        self.set_logger_multiprocess(q, default_logs)
         with silent_logs('slopeArea'):
-            try:
-                ret = self.execute()
-            except Exception as e:
-                self.log(
-                    'Trial failed with error: %s' % e,
-                    level=logging.ERROR,
-                    status=TrialStatus.ERRORED,
-                    exception=e,
-                )
-                raise e
-            else:
-                self.log(
-                    'Trial finished with success!', status=TrialStatus.FINISHED
-                )
-                return ret
+            return self.run()
+
+    def run(self) -> TrialResult:
+        if self.logger is None:
+            self.set_logger()
+        try:
+            ret = self.execute()
+        except Exception as e:
+            self.log(
+                'Trial failed with error: %s' % e,
+                level=logging.ERROR,
+                status=TrialStatus.ERRORED,
+                exception=e,
+            )
+            raise e
+        else:
+            self.log(
+                'Trial finished with success!', status=TrialStatus.FINISHED
+            )
+            return ret
 
 
 @dataclass

@@ -173,12 +173,6 @@ def redirect_warnings(
     ESRI Shapefile driver. slope-area uses shapefiles because this is the
     only driver currently supported by Whitebox Tools.
     """
-    extra: dict[str, t.Any] = {}
-    if isinstance(logger, logging.LoggerAdapter):
-        if logger.extra:
-            extra.update(logger.extra)
-        logger = logger.logger
-    assert isinstance(logger, logging.Logger)
     curr_showwarning = copy.copy(warnings.showwarning)
     spec = importlib.util.find_spec(module)
 
@@ -191,7 +185,6 @@ def redirect_warnings(
                         'warningCategory': category.__name__,
                         'warningFileName': filename,
                         'warningLineNo': lineno,
-                        **extra,
                     },
                 )
         else:
