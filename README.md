@@ -12,6 +12,7 @@ Tool that can be used to generate slope-area plots and other analysis.
    - [Download SAGA GIS](#download-saga-gis)  
      - [Download SAGA GIS on Linux](#download-saga-gis-on-linux)  
      - [Download SAGA GIS on Windows](#download-saga-gis-on-windows)  
+   - [Download uv](#download-uv)
    - [Download package](#download-package)  
    - [Activate environment](#activate-environment)  
      - [Activate environment on Linux](#activate-environment-on-linux)  
@@ -33,6 +34,10 @@ sudo apt install saga
 #### Download SAGA GIS on Windows
 
 Install the latest version on [SourceForge](https://sourceforge.net/projects/saga-gis/files/latest/download).
+
+### Download uv
+
+Details: https://docs.astral.sh/uv/getting-started/installation/
 
 ### Download package
 
@@ -61,6 +66,8 @@ source .venv/bin/activate
 ```sh
 pytest tests
 ```
+
+More examples [here](https://github.com/alecsandrei/slope-area/tree/main/notebooks) and [here](https://github.com/alecsandrei/slope-area/blob/main/slope_area/__main__.py).
 
 ## Project Organization
 
