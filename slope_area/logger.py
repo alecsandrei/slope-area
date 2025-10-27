@@ -231,26 +231,23 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
         self.log(level, msg)
 
     def mark_running(self):
-        color = _COLORS_TRIAL_STATUS[TrialStatus.RUNNING]
         self._log_with_context(
             logging.INFO,
-            f'[{color}]Running...[/{color}]',
+            'Running...',
             status=TrialStatus.RUNNING,
         )
 
     def mark_finished(self):
-        color = _COLORS_TRIAL_STATUS[TrialStatus.FINISHED]
         self._log_with_context(
             logging.INFO,
-            f'[{color}]Finished with success![/{color}]',
+            'Finished with success!',
             status=TrialStatus.FINISHED,
         )
 
     def mark_error(self, exc: Exception):
-        color = _COLORS_TRIAL_STATUS[TrialStatus.ERRORED]
         self._log_with_context(
             logging.ERROR,
-            f'[{color}]Error: {exc}[/{color}]',
+            f'Error: {exc}',
             status=TrialStatus.ERRORED,
             exc=exc,
         )
