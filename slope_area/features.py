@@ -4,7 +4,7 @@ from collections import UserList
 import collections.abc as c
 import concurrent.futures
 from dataclasses import InitVar, dataclass, field
-from functools import cache
+from functools import cache, partial
 import logging
 from os import fspath, makedirs
 from pathlib import Path
@@ -132,15 +132,23 @@ class GeneralizedDEM(Raster):
     ) -> list[WhiteboxRaster]:
         return [get_wbw_env().read_raster(fspath(raster)) for raster in rasters]
 
-    def compute_flow(self, prefix: str) -> FlowAccumulationComputationOutput:
+    def compute_flow(
+        self, rasters: tuple[Path, Path, Path]
+    ) -> FlowAccumulationComputationOutput:
         hydro_analysis = HydrologicAnalysis(self.path, out_dir=self.out_dir)
         output = hydro_analysis.compute_flow()
-        output.write_whitebox(
-            self.out_dir,
-            prefix=prefix,
+        outputs = (
+            output.dem_preproc,
+            output.d8_pointer,
+            output.flow_accumulation,
+        )
+        write_whitebox_func = partial(
+            write_whitebox,
             overwrite=True,
             logger=m_logger.getChild(self.__class__.__name__),
         )
+        for wbw_raster, out_file in zip(outputs, rasters):
+            write_whitebox_func(wbw_raster, out_file)
         return output
 
     def read_flow_output(
@@ -172,7 +180,7 @@ class GeneralizedDEM(Raster):
                 'Computing rasters %s'
                 % ', '.join([Path(raster).stem for raster in rasters])
             )
-            return self.compute_flow(prefix)
+            return self.compute_flow(rasters)
 
 
 class Feature(t.TypedDict):

@@ -21,7 +21,7 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area._typing import AnyLogger, Resolution
 from slope_area.config import IS_NOTEBOOK, get_wbw_env
-from slope_area.logger import create_logger
+from slope_area.logger import create_logger, turn_off_handlers
 
 if t.TYPE_CHECKING:
     from os import PathLike
@@ -148,24 +148,10 @@ def timeit(logger: AnyLogger | None = None, level: int = logging.INFO):
 
 
 @contextmanager
-def silence_logger_stdout_stderr(parent_logger_name: str):
-    parent_logger = logging.getLogger('slopeArea')
-    original_handlers = parent_logger.handlers[:]
-    file_handler = logging.getHandlerByName('slopeAreaFile')
-    assert file_handler is not None
-    handlers = [file_handler]
-    parent_logger.handlers = handlers
-    try:
-        yield
-    finally:
-        parent_logger.handlers = original_handlers
-
-
-@contextmanager
 def redirect_warnings(
     logger: logging.Logger | logging.LoggerAdapter,
-    warning_category,
-    module,
+    warning_category: t.Type[Warning],
+    module: str,
 ):
     """Redirects all warnings to logger, disabling all handlers except slopeAreaFile.
 
@@ -178,7 +164,7 @@ def redirect_warnings(
 
     def showwarning(message, category, filename, lineno, file=None, line=None):
         if category is warning_category and filename == spec.origin:
-            with silence_logger_stdout_stderr('slopeArea'):
+            with turn_off_handlers('slopeArea', ('stdout', 'stderr')):
                 logger.warning(
                     str(message),
                     extra={
@@ -199,7 +185,8 @@ def redirect_warnings(
 
 @contextmanager
 def suppress_stdout_stderr_notebook():
-    # This func not yet tested
+    # This does not work, it's here as a placeholder
+    # I do not think it's possible to make it work for Jupyter Notebooks
     with open(os.devnull, 'w') as f:
         with contextlib.redirect_stdout(f) and contextlib.redirect_stderr(f):
             yield

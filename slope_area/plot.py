@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import collections.abc as c
 from dataclasses import dataclass
 from itertools import groupby
 from pathlib import Path
-import typing as t
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,10 +11,7 @@ import seaborn as sns
 
 from slope_area.logger import create_logger
 
-if t.TYPE_CHECKING:
-    from slope_area.builder import TrialResult
-
-logger = create_logger(__name__)
+m_logger = create_logger(__name__)
 
 
 def slope_area_plot(
@@ -24,6 +19,10 @@ def slope_area_plot(
     slope: np.ndarray,
     min_gradient: float = 0.01,
     log_interval: float = 0.25,
+    add_vlines: bool = False,
+    add_scatter: bool = False,
+    ymin: float | None = None,
+    ymax: float | None = None,
     **plot_kwargs,
 ):
     slope = np.clip(slope, a_min=min_gradient, a_max=None)
@@ -43,22 +42,23 @@ def slope_area_plot(
         mean_slopes.append(mean)
     acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
 
-    # sns.scatterplot(
-    #    x='area',
-    #    y='slope',
-    #    data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
-    #    s=30,
-    #    alpha=0.2,
-    #    color='cyan',
-    # )
-    # plt.vlines(
-    #     area_bins,
-    #     ymin=slope.min(),
-    #     ymax=slope.max(),
-    #     linewidth=0.5,
-    #     label="Intervale logaritmice",
-    #     colors="blue",
-    # )
+    if add_vlines:
+        plt.vlines(
+            area_bins,
+            ymin=ymin or slope.min(),
+            ymax=ymax or slope.max(),
+            linewidth=0.5,
+            colors='blue',
+        )
+    if add_scatter:
+        sns.scatterplot(
+            x='area',
+            y='slope',
+            data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
+            s=30,
+            alpha=0.2,
+            color='cyan',
+        )
 
     plt.plot(
         acenters_subset,
@@ -81,21 +81,25 @@ def get_col_wrap(n_unique: int):
             break
     else:
         col_wrap = 5
-    logger.info('Infered %i cols for the plot' % col_wrap)
+    m_logger.info('Infered %i cols for the plot' % col_wrap)
     return col_wrap
 
 
 @dataclass(kw_only=True)
 class SlopeAreaPlotConfig:
+    log_interval: float = 0.25
+    min_gradient: float = 0.01
     col_wrap: int = -1
     height: int = 5
     aspect: int = 1
+    add_vlines: bool = False
+    add_scatter: bool = False
 
 
 def slope_area_grid(
     data: pd.DataFrame, col: str, out_fig: Path, config: SlopeAreaPlotConfig
 ):
-    logger.info('Creating slope area plot with config %s' % config)
+    m_logger.info('Creating slope area plot with config %s' % config)
     if config.col_wrap == -1:
         col_wrap = get_col_wrap(data[col].nunique())
     else:
@@ -108,44 +112,23 @@ def slope_area_grid(
         aspect=config.aspect,
         col_wrap=col_wrap,
     )
-    g.map(slope_area_plot, 'area', 'slope').set(xscale='log', yscale='log')
+    slope = data['slope']
+    g = g.map(
+        slope_area_plot,
+        'area',
+        'slope',
+        min_gradient=config.min_gradient,
+        log_interval=config.log_interval,
+        add_vlines=config.add_vlines,
+        add_scatter=config.add_scatter,
+        ymin=slope.min(),
+        ymax=slope.max(),
+    ).set(xscale='log', yscale='log')
     g.set_axis_labels('Drainage area (m$^2$)', 'Slope (m/m)', fontsize=16)
     g.set_titles(size=10)
-    g.axes.flat[0].legend(fontsize=16, loc='lower left')
+    g.axes.flat[0].legend(fontsize=16)
     plt.tight_layout(pad=2)
     plt.savefig(out_fig, dpi=300)
-    logger.info('Saved slope area plot at %s' % out_fig)
+    m_logger.info('Saved slope area plot at %s' % out_fig)
+    plt.show()
     plt.close()
-
-
-def preprocess_trial_result(trial_result: TrialResult):
-    slope_cols = ['Slope 3x3', 'StreamSlopeContinuous']
-    df = trial_result.profiles.rename(
-        columns={
-            'slope_grad': 'StreamSlopeContinuous',
-            'slope': 'Slope 3x3',
-            'flowacc': 'area',
-        }
-    )
-    df = df.melt(
-        id_vars=df.columns.difference(slope_cols),
-        value_vars=slope_cols,
-        var_name='slope_type',
-        value_name='values',
-    )
-    slope_inv = df['values'] / 100
-    df['values'] = slope_inv
-    df = df.rename(columns={'values': 'slope'})
-    df['resolution'] = str(trial_result.config.resolution)
-    df['trial_name'] = trial_result.config.name
-    return df
-
-
-def preprocess_trial_results(trial_results: c.Iterable[TrialResult]):
-    return pd.concat(
-        [
-            preprocess_trial_result(trial_result)
-            for trial_result in trial_results
-        ],
-        ignore_index=True,
-    )

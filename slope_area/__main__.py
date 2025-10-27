@@ -7,7 +7,7 @@ from slope_area.builder import (
     DEMSource,
     OutletPlotBuilder,
     ResolutionPlotBuilder,
-    StaticVRT,
+    StaticDEM,
     Trial,
     TrialConfig,
 )
@@ -21,6 +21,7 @@ from slope_area.features import (
 from slope_area.geomorphometry import HydrologicAnalysisConfig
 from slope_area.logger import create_logger
 from slope_area.paths import PROJ_ROOT
+from slope_area.plot import SlopeAreaPlotConfig
 
 logger = create_logger(__name__)
 
@@ -38,7 +39,7 @@ def main():
     out_dir = PROJ_ROOT / 'data' / 'processed'
 
     # ---- Run configs ----
-    plot_kind = 'resolution'
+    plot_kind = 'outlet'
     outlet_name = 'gully 13'
     resolutions = [(res, res) for res in range(5, 15)]
 
@@ -53,6 +54,15 @@ def main():
     hydrologic_analysis_config = HydrologicAnalysisConfig(
         streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
     )
+    plot_config = SlopeAreaPlotConfig(
+        log_interval=0.25,
+        min_gradient=0.01,
+        col_wrap=-1,
+        height=5,
+        aspect=1,
+        add_vlines=True,
+        add_scatter=True,
+    )
 
     logger.info('Reading outlets at %s' % outlets)
     gdf = gpd.read_file(outlets).sort_values(by='name')
@@ -61,18 +71,30 @@ def main():
 
     if plot_kind == 'resolution':
         builder_config = BuilderConfig(
-            hydrologic_analysis_config, out_dir / outlet_name, max_workers=4
+            hydrologic_analysis_config,
+            out_dir / outlet_name,
+            plot_config=plot_config,
+            max_workers=4,
         )
         outlet = [outlet for outlet in outlets if outlet.name == outlet_name]
         ResolutionPlotBuilder(
-            builder_config, dem_source, outlet[0], resolutions
+            builder_config,
+            dem_source,
+            outlet[0],
+            resolutions,
         ).build()
     elif plot_kind == 'outlet':
         builder_config = BuilderConfig(
-            hydrologic_analysis_config, out_dir, max_workers=2
+            hydrologic_analysis_config,
+            out_dir / 'outlet',
+            plot_config=plot_config,
+            max_workers=5,
         )
         OutletPlotBuilder(
-            builder_config, dem_source, outlets=outlets, resolution=(5, 5)
+            config=builder_config,
+            dem_source=dem_source,
+            outlets=outlets,
+            resolution=(5, 5),
         ).build()
     else:
         outlet = outlets[0]
@@ -83,7 +105,7 @@ def main():
                 outlet=outlets[0],
                 resolution=(10, 10),
                 hydrologic_analysis_config=hydrologic_analysis_config,
-                dem_provider=StaticVRT(
+                dem_provider=StaticDEM(
                     VRT.from_dem_tiles(
                         DEMTiles.from_outlet(
                             dem_source,
@@ -97,6 +119,7 @@ def main():
                 out_dir=out_dir,
             )
         ).run()
+        logger.info('Trial finished: %s' % trial)
 
 
 if __name__ == '__main__':

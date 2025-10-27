@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc as c
 from contextlib import contextmanager
 import datetime as dt
 import json
@@ -10,7 +11,7 @@ import queue
 import sys
 import typing as t
 
-from slope_area._typing import RichTableLogs, TrialLoggingContext
+from slope_area._typing import AnyLogger, RichTableLogs, TrialLoggingContext
 from slope_area.enums import TrialStatus
 from slope_area.paths import LOGGING_CONFIG, PROJ_ROOT
 
@@ -192,29 +193,92 @@ class RichDictHandler(logging.Handler):
         self.queue.put_nowait({trial_name: curr_data})
 
 
+class TrialLoggerAdapter(logging.LoggerAdapter):
+    def __init__(
+        self,
+        logger,
+        trial_name: str,
+        trial_context: TrialLoggingContext | None = None,
+    ):
+        super().__init__(logger)
+        self.logger = logger
+        self.trial_name = trial_name
+        self.trial_context = trial_context or {}
+
+    def process(
+        self, msg: t.Any, kwargs: c.MutableMapping[str, t.Any]
+    ) -> tuple[t.Any, c.MutableMapping[str, t.Any]]:
+        kwargs.setdefault('extra', {}).update(
+            {'trialName': self.trial_name, 'trialContext': self.trial_context}
+        )
+        return (msg, kwargs)
+
+    def _log_with_context(
+        self,
+        level: int,
+        msg: str,
+        *,
+        status: TrialStatus | None = None,
+        exc: Exception | None = None,
+    ):
+        trial_context: TrialLoggingContext = {}
+        if status is not None:
+            trial_context['trialStatus'] = status
+        if exc is not None:
+            trial_context['trialException'] = exc
+        self.trial_context.update(trial_context)
+
+        self.log(level, msg)
+
+    def mark_running(self):
+        color = _COLORS_TRIAL_STATUS[TrialStatus.RUNNING]
+        self._log_with_context(
+            logging.INFO,
+            f'[{color}]Running...[/{color}]',
+            status=TrialStatus.RUNNING,
+        )
+
+    def mark_finished(self):
+        color = _COLORS_TRIAL_STATUS[TrialStatus.FINISHED]
+        self._log_with_context(
+            logging.INFO,
+            f'[{color}]Finished with success![/{color}]',
+            status=TrialStatus.FINISHED,
+        )
+
+    def mark_error(self, exc: Exception):
+        color = _COLORS_TRIAL_STATUS[TrialStatus.ERRORED]
+        self._log_with_context(
+            logging.ERROR,
+            f'[{color}]Error: {exc}[/{color}]',
+            status=TrialStatus.ERRORED,
+            exc=exc,
+        )
+
+
 def create_logger(name: str) -> logging.Logger:
     logger = logging.getLogger('slopeArea')
     return logger.getChild(name)
 
 
 @contextmanager
-def silent_logs(*logger_names):
-    saved_handlers = {}
-    for name in logger_names:
-        logger = logging.getLogger(name)
-        saved_handlers[name] = logger.handlers[:]
-        # This leaves slopeAreaFile as a handler
-        logger.handlers = [
-            h
-            for h in logger.handlers
-            if not isinstance(h, logging.StreamHandler)
-            or isinstance(h, logging.handlers.RotatingFileHandler)
-        ]
+def turn_off_handlers(
+    logger: str | AnyLogger, handlers: c.Sequence[str] | None = None
+):
+    if isinstance(logger, str):
+        logger = logging.getLogger(logger)
+    elif isinstance(logger, logging.LoggerAdapter):
+        logger = logger.logger
+    assert isinstance(logger, logging.Logger)
+    saved_handlers = logger.handlers[:]
+    if handlers is None:
+        logger.handlers.clear()
+    else:
+        logger.handlers = [h for h in logger.handlers if h.name not in handlers]
     try:
         yield
     finally:
-        for name, handlers in saved_handlers.items():
-            logging.getLogger(name).handlers = handlers
+        logger.handlers = saved_handlers
 
 
 def setup_logging():
@@ -224,3 +288,7 @@ def setup_logging():
         PROJ_ROOT / config['handlers']['slopeAreaFile']['filename']
     ).as_posix()
     logging.config.dictConfig(config)
+
+
+def turn_off_logging():
+    logging.getLogger('slopeArea').disabled = True

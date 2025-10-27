@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import collections.abc as c
 from dataclasses import InitVar, dataclass, field
 from functools import partial
 import logging
@@ -29,53 +28,7 @@ m_logger = create_logger(__name__)
 
 
 @dataclass(frozen=True)
-class ComputationOutput:
-    def write_whitebox(
-        self,
-        out_dir: Path,
-        prefix: str = '',
-        names: c.Sequence[str] | None = None,
-        *,
-        logger: AnyLogger = m_logger,
-        recurse: bool = False,
-        overwrite: bool = False,
-        wbw_env: WbEnvironment | None = None,
-    ):
-        if wbw_env is None:
-            wbw_env = get_wbw_env(logger)
-        makedirs(out_dir, exist_ok=True)
-        for name, output in self.__dict__.items():
-            if names is not None and name not in names:
-                continue
-            output = self.__dict__[name]
-            out_base = out_dir / f'{prefix}{name}'
-            out_file = None
-            if isinstance(output, WhiteboxRaster):
-                out_file = out_base.with_suffix('.tif')
-            elif isinstance(output, WhiteboxVector):
-                out_file = out_base.with_suffix('.shp')
-            elif isinstance(output, ComputationOutput):
-                if recurse:
-                    output.write_whitebox(
-                        out_dir=out_dir / name,
-                        prefix=prefix,
-                        recurse=recurse,
-                        wbw_env=wbw_env,
-                    )
-                continue
-            else:
-                logger.error(
-                    'Failed to save %s. Unknown Whitebox Workflows object %s'
-                    % (name, output)
-                )
-                continue
-            write_whitebox(
-                output,
-                out_file,
-                logger=logger,
-                overwrite=overwrite,
-                wbw_env=wbw_env,
-            )
+class ComputationOutput: ...
 
 
 @dataclass(frozen=True)
@@ -221,19 +174,19 @@ class HydrologicAnalysis:
 
         # ---- Computing the slope gradient for the masked DEM ----
         self._logger.info(
-            'Computing the slope gradient for the streams in the watershed'
+            'Computing the slope gradient for the main stream in the watershed'
         )
         flow_watershed = self.compute_flow(dem_preproc_mask)
-        streams = self._wbw_env.find_main_stem(
-            flow_watershed.d8_pointer,
-            self._wbw_env.extract_streams(
-                flow_watershed.flow_accumulation,
-                config.streams_flow_accumulation_threshold,
-            ),
+        streams = self._wbw_env.extract_streams(
+            flow_watershed.flow_accumulation,
+            config.streams_flow_accumulation_threshold,
+        )
+        main_stream = self._wbw_env.find_main_stem(
+            flow_watershed.d8_pointer, streams
         )
         slope_gradient = degree_to_percent(
             self._wbw_env.stream_slope_continuous(
-                flow_watershed.d8_pointer, streams, dem_preproc_mask
+                flow_watershed.d8_pointer, main_stream, dem_preproc_mask
             )
         )
         slope_gradient_output = SlopeGradientComputationOutput(

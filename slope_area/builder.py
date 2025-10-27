@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import UserList
 import collections.abc as c
 import concurrent.futures
 from dataclasses import astuple, dataclass, field, fields
@@ -54,12 +55,12 @@ from slope_area.geomorphometry import (
 )
 from slope_area.logger import (
     RichDictHandler,
+    TrialLoggerAdapter,
     create_logger,
-    silent_logs,
+    turn_off_handlers,
 )
 from slope_area.plot import (
     SlopeAreaPlotConfig,
-    preprocess_trial_results,
     slope_area_grid,
 )
 from slope_area.utils import (
@@ -101,6 +102,7 @@ def create_rich_logger(
 class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
+    plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
 
     def __post_init__(self):
@@ -127,7 +129,7 @@ class Builder(ABC):
     def get_trials(self) -> list[Trial]: ...
 
     @abstractmethod
-    def save_plot(self, trial_results: list[TrialResult]): ...
+    def save_plot(self, trial_results: TrialResults): ...
 
     def run_trials(
         self, trials: c.Iterable[Trial], logs: RichTableLogs
@@ -177,12 +179,16 @@ class Builder(ABC):
             name: self.get_default_log_for_trial(name)
             for name in self.trial_names
         }
-        # m_logger = create_rich_logger(self.__class__.__name__, logs)
         trials = self.get_trials()
         futures = self.run_trials(trials, logs)
-        trial_results = [
-            future.result() for future in futures if future.exception() is None
-        ]
+        trial_results = TrialResults(
+            [
+                result
+                for future in futures
+                if future.exception() is None
+                and (result := future.result()) is not None
+            ]
+        )
         self.save_plot(trial_results)
 
 
@@ -218,22 +224,21 @@ class ResolutionPlotBuilder(Builder):
                     outlet=self.outlet,
                     resolution=resolution,
                     hydrologic_analysis_config=self.config.hydrologic_analysis_config,
-                    dem_provider=StaticVRT(vrt),
+                    dem_provider=StaticDEM(vrt),
                     out_dir=self.config.out_dir / trial_name,
                 ),
-                # logger=logger,
             )
             for trial_name, resolution in zip(
                 self.trial_names, self.resolutions
             )
         ]
 
-    def save_plot(self, trial_results: c.Iterable[TrialResult]) -> None:
+    def save_plot(self, trial_results: TrialResults) -> None:
         slope_area_grid(
-            data=preprocess_trial_results(trial_results),
-            col='trial_name',
+            data=trial_results.get_preprocessed().to_dataframe(),
+            col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
-            config=SlopeAreaPlotConfig(),
+            config=self.config.plot_config or SlopeAreaPlotConfig(),
         )
 
 
@@ -283,17 +288,16 @@ class OutletPlotBuilder(Builder):
                     hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                     out_dir=self.config.out_dir / trial_name,
                 ),
-                # logger=logger,
             )
             for trial_name, outlet in zip(self.trial_names, self.outlets)
         ]
 
-    def save_plot(self, trial_results: c.Iterable[TrialResult]) -> None:
+    def save_plot(self, trial_results: TrialResults) -> None:
         slope_area_grid(
-            data=preprocess_trial_results(trial_results),
-            col='trial_name',
+            data=trial_results.get_preprocessed().to_dataframe(),
+            col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
-            config=SlopeAreaPlotConfig(),
+            config=self.config.plot_config or SlopeAreaPlotConfig(),
         )
 
 
@@ -307,11 +311,11 @@ class DEMProvider(t.Protocol):
 
 
 @dataclass
-class StaticVRT(DEMProvider):
-    vrt: VRT
+class StaticDEM(DEMProvider):
+    dem: Raster
 
-    def get_dem(self, *args, **kwargs) -> VRT:
-        return self.vrt
+    def get_dem(self, *args, **kwargs) -> Raster:
+        return self.dem
 
 
 @dataclass
@@ -362,27 +366,6 @@ class TrialQueue:
     def __init__(self):
         self.rich = multiprocessing.Manager().Queue(-1)
         self.logging = multiprocessing.Manager().Queue(-1)
-
-
-class TrialLoggerAdapter(logging.LoggerAdapter):
-    def __init__(
-        self,
-        logger,
-        trial_name: str,
-        trial_context: TrialLoggingContext | None = None,
-    ):
-        super().__init__(logger)
-        self.logger = logger
-        self.trial_name = trial_name
-        self.trial_context = trial_context or {}
-
-    def process(
-        self, msg: t.Any, kwargs: c.MutableMapping[str, t.Any]
-    ) -> tuple[t.Any, c.MutableMapping[str, t.Any]]:
-        kwargs.setdefault('extra', {}).update(
-            {'trialName': self.trial_name, 'trialContext': self.trial_context}
-        )
-        return (msg, kwargs)
 
 
 @dataclass
@@ -547,7 +530,6 @@ class Trial:
         )
 
     def execute(self) -> TrialResult:
-        self.log(status=TrialStatus.RUNNING)
         self.log('Getting the DEM raster')
         dem = self.config.dem_provider.get_dem(
             wbw_env=self.wbw_env, logger=self.logger_adapter
@@ -564,26 +546,21 @@ class Trial:
         self, q: TrialQueue, default_logs: RichTableLogs
     ) -> TrialResult:
         self.set_logger_multiprocess(q, default_logs)
-        with silent_logs('slopeArea'):
+        with turn_off_handlers('slopeArea', ('stdout', 'stderr')):
             return self.run()
 
     def run(self) -> TrialResult:
         if self.logger is None:
             self.set_logger()
         try:
+            self.logger_adapter.mark_running()
             ret = self.execute()
         except Exception as e:
-            self.log(
-                'Trial failed with error: %s' % e,
-                level=logging.ERROR,
-                status=TrialStatus.ERRORED,
-                exception=e,
-            )
+            self.logger_adapter.mark_error(exc=e)
             raise e
         else:
-            self.log(
-                'Trial finished with success!', status=TrialStatus.FINISHED
-            )
+            self.logger_adapter.mark_finished()
+        finally:
             return ret
 
 
@@ -591,3 +568,35 @@ class Trial:
 class TrialResult:
     profiles: pd.DataFrame
     config: TrialConfig
+
+    def get_preprocessed(self) -> TrialResult:
+        slope_cols = ['Slope 3x3', 'StreamSlopeContinuous']
+        df = self.profiles.rename(
+            columns={
+                'slope_grad': 'StreamSlopeContinuous',
+                'slope': 'Slope 3x3',
+                'flowacc': 'area',
+            }
+        )
+        df = df.melt(
+            id_vars=df.columns.difference(slope_cols),
+            value_vars=slope_cols,
+            var_name='slope_type',
+            value_name='values',
+        )
+        slope_inv = df['values'] / 100
+        df['values'] = slope_inv
+        df = df.rename(columns={'values': 'slope'})
+        df['resolution'] = str(self.config.resolution)
+        return TrialResult(df, self.config)
+
+
+class TrialResults(UserList[TrialResult]):
+    def get_preprocessed(self) -> TrialResults:
+        preprocessed = [r.get_preprocessed() for r in self.data]
+        return TrialResults(preprocessed)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        return pd.concat(
+            [r.profiles.assign(trial=r.config.name) for r in self.data]
+        )
