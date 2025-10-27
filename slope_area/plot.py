@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from slope_area._typing import PlotKind
 from slope_area.logger import create_logger
 
 m_logger = create_logger(__name__)
@@ -23,6 +24,7 @@ def slope_area_plot(
     add_scatter: bool = False,
     ymin: float | None = None,
     ymax: float | None = None,
+    kind: PlotKind = 'line',
     **plot_kwargs,
 ):
     slope = np.clip(slope, a_min=min_gradient, a_max=None)
@@ -36,11 +38,32 @@ def slope_area_plot(
     bin_indices = np.digitize(area, area_bins, right=True)
     data = np.column_stack([slope, area, bin_indices])
     data = data[data[:, 2].argsort()]
-    mean_slopes = []
-    for bin, grouper in groupby(data, lambda arr: arr[2]):
-        mean = float(np.mean([values[0] for values in grouper]))
-        mean_slopes.append(mean)
-    acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
+    if kind == 'line':
+        mean_slopes = []
+        for bin, grouper in groupby(data, lambda arr: arr[2]):
+            mean = float(np.mean([values[0] for values in grouper]))
+            mean_slopes.append(mean)
+        acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
+        plt.plot(
+            acenters_subset,
+            mean_slopes,
+            marker='o',
+            linestyle='-',
+            linewidth=2,
+            markersize=5,
+            **plot_kwargs,
+        )
+    elif kind == 'scatter':
+        sns.scatterplot(
+            x='area',
+            y='slope',
+            data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
+            s=10,
+            alpha=0.1,
+            edgecolors='black',
+            linewidths=0.2,
+            **plot_kwargs,
+        )
 
     if add_vlines:
         plt.vlines(
@@ -48,28 +71,8 @@ def slope_area_plot(
             ymin=ymin or slope.min(),
             ymax=ymax or slope.max(),
             linewidth=0.5,
-            colors='blue',
+            colors='cyan',
         )
-    if add_scatter:
-        sns.scatterplot(
-            x='area',
-            y='slope',
-            data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
-            s=30,
-            alpha=0.2,
-            color='cyan',
-        )
-
-    plt.plot(
-        acenters_subset,
-        mean_slopes,
-        # color="red",
-        marker='o',
-        linestyle='-',
-        linewidth=2,
-        markersize=5,
-        **plot_kwargs,
-    )
     plt.tick_params(labelsize=14)
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
@@ -80,7 +83,7 @@ def get_col_wrap(n_unique: int):
             col_wrap = wrap
             break
     else:
-        col_wrap = 5
+        col_wrap = min(n_unique, 5)
     m_logger.info('Infered %i cols for the plot' % col_wrap)
     return col_wrap
 
@@ -93,7 +96,8 @@ class SlopeAreaPlotConfig:
     height: int = 5
     aspect: int = 1
     add_vlines: bool = False
-    add_scatter: bool = False
+    kind: PlotKind = 'line'
+    show: bool = False
 
 
 def slope_area_grid(
@@ -120,15 +124,16 @@ def slope_area_grid(
         min_gradient=config.min_gradient,
         log_interval=config.log_interval,
         add_vlines=config.add_vlines,
-        add_scatter=config.add_scatter,
+        kind=config.kind,
         ymin=slope.min(),
         ymax=slope.max(),
     ).set(xscale='log', yscale='log')
     g.set_axis_labels('Drainage area (m$^2$)', 'Slope (m/m)', fontsize=16)
     g.set_titles(size=10)
-    g.axes.flat[0].legend(fontsize=16)
+    g.axes.flat[0].legend(fontsize=10)
     plt.tight_layout(pad=2)
     plt.savefig(out_fig, dpi=300)
     m_logger.info('Saved slope area plot at %s' % out_fig)
-    plt.show()
+    if config.show:
+        plt.show()
     plt.close()

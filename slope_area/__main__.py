@@ -35,15 +35,11 @@ def main():
         PROJ_ROOT / 'data' / 'processed' / generalized_dem.stem
     )
     outlets = PROJ_ROOT / 'data' / 'raw' / 'outlets.shp'
-    dem_dir_epsg = 3844
     out_dir = PROJ_ROOT / 'data' / 'processed'
 
     # ---- Run configs ----
-    plot_kind = 'outlet'
-    outlet_name = 'gully 13'
-    resolutions = [(res, res) for res in range(5, 15)]
-
-    # ---- Init objects ----
+    plot_kind = 'resolution'
+    dem_dir_epsg = 3844
     tiles = DEMTilesBuilder(
         dem_dir, dem_dir_epsg=dem_dir_epsg, tiles=dem_tiles
     ).build()
@@ -61,22 +57,26 @@ def main():
         height=5,
         aspect=1,
         add_vlines=True,
-        add_scatter=True,
+        kind='line',
+        show=True,
     )
 
+    # ---- Read outlets ----
     logger.info('Reading outlets at %s' % outlets)
     gdf = gpd.read_file(outlets).sort_values(by='name')
     gdf = gdf[gdf['is_gully'] == 1]
     outlets = Outlets.from_gdf(gdf, name_field='name')
 
     if plot_kind == 'resolution':
+        resolutions = [(res, res) for res in range(1, 10)]
+        outlet_name = 'gully 15'
+        outlet = [outlet for outlet in outlets if outlet.name == outlet_name]
         builder_config = BuilderConfig(
             hydrologic_analysis_config,
             out_dir / outlet_name,
             plot_config=plot_config,
-            max_workers=4,
+            max_workers=5,
         )
-        outlet = [outlet for outlet in outlets if outlet.name == outlet_name]
         ResolutionPlotBuilder(
             builder_config,
             dem_source,

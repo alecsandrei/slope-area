@@ -8,7 +8,7 @@ if t.TYPE_CHECKING:
     from slope_area.builder import RichTableRowData
     from slope_area.enums import TrialStatus
 
-
+type PlotKind = t.Literal['line', 'scatter']
 type AnyLogger = logging.Logger | logging.LoggerAdapter
 
 type Resolution[T: (int, float)] = tuple[T, T]
