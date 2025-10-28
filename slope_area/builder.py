@@ -159,6 +159,8 @@ class Builder(ABC):
                     live.update(make_table(logs), refresh=IS_NOTEBOOK)
                     time.sleep(0.1)
                 live.update(make_table(logs), refresh=IS_NOTEBOOK)
+
+            # stops the table thread
             q.rich.put(None)
             make_table_thread.join()
         return futures
