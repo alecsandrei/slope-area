@@ -237,7 +237,7 @@ class ResolutionPlotBuilder(Builder):
 
     def save_plot(self, trial_results: TrialResults) -> None:
         slope_area_grid(
-            data=trial_results.get_preprocessed().to_dataframe(),
+            data=trial_results.to_dataframe(),
             col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
             config=self.config.plot_config or SlopeAreaPlotConfig(),
@@ -296,7 +296,7 @@ class OutletPlotBuilder(Builder):
 
     def save_plot(self, trial_results: TrialResults) -> None:
         slope_area_grid(
-            data=trial_results.get_preprocessed().to_dataframe(),
+            data=trial_results.to_dataframe(),
             col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
             config=self.config.plot_config or SlopeAreaPlotConfig(),
@@ -332,7 +332,7 @@ class DynamicVRT(DEMProvider):
         *,
         wbw_env: WbEnvironment,
         logger: AnyLogger | None = None,
-    ):
+    ) -> VRT:
         if wbw_env is None:
             raise
         dem_tiles = DEMTiles.from_outlet(
@@ -493,6 +493,29 @@ class Trial:
         self.rename_profiles_fields(profiles_path, rasters)
         return profiles_path
 
+    def process_profiles(self, profiles: Path) -> gpd.GeoDataFrame:
+        self.logger_adapter.info('Reading profiles %s' % profiles)
+        gdf = gpd.read_file(profiles)
+        slope_cols = ['Slope 3x3', 'StreamSlopeContinuous']
+        gdf = gdf.rename(
+            columns={
+                'slope_grad': 'StreamSlopeContinuous',
+                'slope': 'Slope 3x3',
+                'flowacc': 'area',
+            }
+        )
+        gdf = gdf.melt(
+            id_vars=gdf.columns.difference(slope_cols),
+            value_vars=slope_cols,
+            var_name='slope_type',
+            value_name='values',
+        )
+        slope_inv = gdf['values'] / 100
+        gdf['values'] = slope_inv
+        gdf = gdf.rename(columns={'values': 'slope'})
+        gdf['resolution'] = str(self.config.resolution)
+        return gdf
+
     def log(
         self,
         msg: str = '',
@@ -532,7 +555,7 @@ class Trial:
         )
 
     def execute(self) -> TrialResult:
-        self.log('Getting the DEM raster')
+        self.log('Getting the DEM raster from dem_provider')
         dem = self.config.dem_provider.get_dem(
             wbw_env=self.wbw_env, logger=self.logger_adapter
         )
@@ -541,8 +564,8 @@ class Trial:
         slope_3x3 = self.get_3x3_slope(dem_resampled)
         streams = self.get_streams_as_points(slope_grad)
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)
-        self.log('Reading the profiles %s' % profiles.name)
-        return TrialResult(gpd.read_file(profiles), self.config)
+        processed_profiles = self.process_profiles(profiles)
+        return TrialResult(processed_profiles, self.config)
 
     def run_multiprocess(
         self, q: TrialQueue, default_logs: RichTableLogs
@@ -571,33 +594,8 @@ class TrialResult:
     profiles: pd.DataFrame
     config: TrialConfig
 
-    def get_preprocessed(self) -> TrialResult:
-        slope_cols = ['Slope 3x3', 'StreamSlopeContinuous']
-        df = self.profiles.rename(
-            columns={
-                'slope_grad': 'StreamSlopeContinuous',
-                'slope': 'Slope 3x3',
-                'flowacc': 'area',
-            }
-        )
-        df = df.melt(
-            id_vars=df.columns.difference(slope_cols),
-            value_vars=slope_cols,
-            var_name='slope_type',
-            value_name='values',
-        )
-        slope_inv = df['values'] / 100
-        df['values'] = slope_inv
-        df = df.rename(columns={'values': 'slope'})
-        df['resolution'] = str(self.config.resolution)
-        return TrialResult(df, self.config)
-
 
 class TrialResults(UserList[TrialResult]):
-    def get_preprocessed(self) -> TrialResults:
-        preprocessed = [r.get_preprocessed() for r in self.data]
-        return TrialResults(preprocessed)
-
     def to_dataframe(self) -> pd.DataFrame:
         return pd.concat(
             [r.profiles.assign(trial=r.config.name) for r in self.data]
