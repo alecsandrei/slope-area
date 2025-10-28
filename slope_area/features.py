@@ -303,26 +303,6 @@ class DEMTiles:
         *,
         logger: AnyLogger | None = None,
     ) -> t.Self:
-        return cls._from_outlet_watershed(
-            dem_source,
-            outlet,
-            out_dir=out_dir,
-            outlet_snap_dist=outlet_snap_dist,
-            wbw_env=wbw_env,
-            logger=logger,
-        )
-
-    @classmethod
-    def _from_outlet_watershed(
-        cls,
-        dem_source: DEMSource,
-        outlet: Outlet,
-        out_dir: PathLike,
-        outlet_snap_dist: int = 100,
-        wbw_env: WbEnvironment | None = None,
-        *,
-        logger: AnyLogger | None = None,
-    ) -> t.Self:
         logger = logger or m_logger.getChild(cls.__name__)
         if wbw_env is None:
             wbw_env = get_wbw_env(logger)
