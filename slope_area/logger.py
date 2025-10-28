@@ -228,7 +228,7 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
             trial_context['trialException'] = exc
         self.trial_context.update(trial_context)
 
-        self.log(level, msg)
+        self.log(level, msg, stacklevel=3)
 
     def mark_running(self):
         self._log_with_context(
