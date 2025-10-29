@@ -50,6 +50,7 @@ class SlopeGradientComputationOutput(ComputationOutput):
     watershed: WatershedComputationOutput
     flow: FlowAccumulationComputationOutput
     streams: WhiteboxRaster
+    main_stream: WhiteboxRaster
     slope_grad: WhiteboxRaster
 
 
@@ -190,7 +191,11 @@ class HydrologicAnalysis:
             )
         )
         slope_gradient_output = SlopeGradientComputationOutput(
-            watershed_output, flow_watershed, streams, slope_gradient
+            watershed_output,
+            flow_watershed,
+            streams,
+            main_stream,
+            slope_gradient,
         )
         write_whitebox_func(
             slope_gradient_output.flow.dem_preproc,

@@ -7,7 +7,6 @@ from slope_area.builder import (
     DEMSource,
     OutletPlotBuilder,
     ResolutionPlotBuilder,
-    StaticDEM,
     Trial,
     TrialConfig,
 )
@@ -57,7 +56,7 @@ def main():
         height=5,
         aspect=1,
         add_vlines=True,
-        kind='line',
+        kind='scatter',
         show=True,
     )
 
@@ -105,16 +104,14 @@ def main():
                 outlet=outlets[0],
                 resolution=(10, 10),
                 hydrologic_analysis_config=hydrologic_analysis_config,
-                dem_provider=StaticDEM(
-                    VRT.from_dem_tiles(
-                        DEMTiles.from_outlet(
-                            dem_source,
-                            outlet,
-                            out_dir,
-                            hydrologic_analysis_config.outlet_snap_distance,
-                        ),
-                        out_dir / 'dem.vrt',
-                    )
+                dem_provider=VRT.from_dem_tiles(
+                    DEMTiles.from_outlet(
+                        dem_source,
+                        outlet,
+                        out_dir,
+                        hydrologic_analysis_config.outlet_snap_distance,
+                    ),
+                    out_dir / 'dem.vrt',
                 ),
                 out_dir=out_dir,
             )

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections import UserList
 import collections.abc as c
 import concurrent.futures
-from dataclasses import astuple, dataclass, field, fields
+from dataclasses import dataclass, field
 from functools import cached_property
 import logging
 from logging.handlers import QueueHandler
@@ -20,33 +20,25 @@ from geopandas import gpd
 import pandas as pd
 import PySAGA_cmd
 from PySAGA_cmd import Raster as SAGARaster
-from rich import box
 from rich.live import Live
-from rich.table import Table
 from whitebox_workflows import WbEnvironment
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import (
-    AnyLogger,
-    Resolution,
-    RichTableLogs,
-    TrialLoggingContext,
-)
+from slope_area._typing import DEMProvider
 from slope_area.config import (
     IS_NOTEBOOK,
     get_saga_env,
     get_saga_raster_suffix,
     get_wbw_env,
 )
-from slope_area.enums import TrialStatus
-from slope_area.features import (
-    VRT,
-    DEMSource,
-    DEMTiles,
-    Outlet,
-    Outlets,
-    Raster,
+from slope_area.console import (
+    RichTableRowData,
+    create_rich_logger,
+    make_table,
+    rich_table_logs_thread,
 )
+from slope_area.enums import TrialStatus
+from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
     HydrologicAnalysis,
     HydrologicAnalysisConfig,
@@ -54,48 +46,23 @@ from slope_area.geomorphometry import (
     compute_slope,
 )
 from slope_area.logger import (
-    RichDictHandler,
     TrialLoggerAdapter,
     create_logger,
     turn_off_handlers,
 )
-from slope_area.plot import (
-    SlopeAreaPlotConfig,
-    slope_area_grid,
-)
-from slope_area.utils import (
-    redirect_warnings,
-    write_whitebox,
-)
+from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
+from slope_area.utils import redirect_warnings, write_whitebox
+
+if t.TYPE_CHECKING:
+    from slope_area._typing import (
+        AnyDEM,
+        Resolution,
+        RichTableLogs,
+        TrialLoggingContext,
+    )
+
 
 m_logger = create_logger(__name__)
-
-
-@dataclass
-class RichTableRowData:
-    trial: str
-    message: str
-    status: str
-    exception: str
-
-
-def make_table(logs: RichTableLogs) -> Table:
-    table = Table(box=box.SQUARE_DOUBLE_HEAD, show_header=True, expand=True)
-
-    for dataclass_field in fields(RichTableRowData):
-        table.add_column(dataclass_field.name.capitalize())
-    for row_data in logs.values():
-        table.add_row(*astuple(row_data))
-    return table
-
-
-def create_rich_logger(
-    logger_name: str, logs: RichTableLogs, q: queue.Queue
-) -> logging.Logger:
-    r_logger = m_logger.getChild(logger_name)
-    rich_handler = RichDictHandler(logs, q)
-    r_logger.addHandler(rich_handler)
-    return r_logger
 
 
 @dataclass(frozen=True)
@@ -107,14 +74,6 @@ class BuilderConfig:
 
     def __post_init__(self):
         makedirs(self.out_dir, exist_ok=True)
-
-
-def rich_table_logs_thread(logs: RichTableLogs, q: queue.Queue):
-    while True:
-        trial_log: RichTableLogs = q.get()
-        if trial_log is None:
-            break
-        logs.update(trial_log)
 
 
 @dataclass
@@ -134,6 +93,11 @@ class Builder(ABC):
     def run_trials(
         self, trials: c.Iterable[Trial], logs: RichTableLogs
     ) -> list[concurrent.futures.Future[TrialResult]]:
+        q = TrialQueue()
+        make_table_thread = threading.Thread(
+            target=rich_table_logs_thread,
+            args=(logs, q.rich),
+        )
         with (
             Live(
                 make_table(logs),
@@ -142,11 +106,6 @@ class Builder(ABC):
                 redirect_stdout=True,
             ) as live,
         ):
-            q = TrialQueue()
-            make_table_thread = threading.Thread(
-                target=rich_table_logs_thread,
-                args=(logs, q.rich),
-            )
             make_table_thread.start()
             with concurrent.futures.ProcessPoolExecutor(
                 max_workers=self.config.max_workers
@@ -165,20 +124,9 @@ class Builder(ABC):
             make_table_thread.join()
         return futures
 
-    @staticmethod
-    def get_default_log_for_trial(
-        trial_name: str,
-    ) -> RichTableRowData:
-        return RichTableRowData(
-            trial=trial_name,
-            message='[dim]Waiting...[/dim]',
-            status=TrialStatus.NOT_STARTED.display(),
-            exception='',
-        )
-
     def build(self) -> None:
         logs: RichTableLogs = {
-            name: self.get_default_log_for_trial(name)
+            name: RichTableRowData.from_trial_name(name)
             for name in self.trial_names
         }
         trials = self.get_trials()
@@ -196,19 +144,9 @@ class Builder(ABC):
 
 @dataclass
 class ResolutionPlotBuilder(Builder):
-    dem_source: DEMSource
+    dem: DEMProvider | Raster | PathLike
     outlet: Outlet
     resolutions: c.Sequence[Resolution]
-
-    def get_vrt(self) -> VRT:
-        dem = self.config.out_dir / 'dem.vrt'
-        dem_tiles = DEMTiles.from_outlet(
-            dem_source=self.dem_source,
-            outlet=self.outlet,
-            out_dir=self.config.out_dir,
-            outlet_snap_dist=self.config.hydrologic_analysis_config.outlet_snap_distance,
-        )
-        return VRT.from_dem_tiles(dem_tiles, dem)
 
     @cached_property
     def trial_names(self) -> list[str]:
@@ -218,7 +156,6 @@ class ResolutionPlotBuilder(Builder):
         ]
 
     def get_trials(self) -> list[Trial]:
-        vrt = self.get_vrt()
         return [
             Trial(
                 config=TrialConfig(
@@ -226,7 +163,7 @@ class ResolutionPlotBuilder(Builder):
                     outlet=self.outlet,
                     resolution=resolution,
                     hydrologic_analysis_config=self.config.hydrologic_analysis_config,
-                    dem_provider=StaticDEM(vrt),
+                    dem=self.dem,
                     out_dir=self.config.out_dir / trial_name,
                 ),
             )
@@ -236,43 +173,28 @@ class ResolutionPlotBuilder(Builder):
         ]
 
     def save_plot(self, trial_results: TrialResults) -> None:
+        plot_config = self.config.plot_config
+        if plot_config is None:
+            plot_config = SlopeAreaPlotConfig(
+                hue='slope_type',
+                col='trial',
+            )
         slope_area_grid(
             data=trial_results.to_dataframe(),
-            col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
-            config=self.config.plot_config or SlopeAreaPlotConfig(),
+            config=plot_config,
         )
-
-
-def get_default_log_for_trial(trial_name: str) -> RichTableRowData:
-    return RichTableRowData(
-        trial=trial_name,
-        message='[dim]Waiting...[/dim]',
-        status=TrialStatus.NOT_STARTED.display(),
-        exception='',
-    )
 
 
 @dataclass
 class OutletPlotBuilder(Builder):
-    dem_source: DEMSource
+    dem: AnyDEM
     outlets: Outlets
     resolution: Resolution
 
     @cached_property
     def trial_names(self) -> list[str]:
         return [str(outlet) for outlet in self.outlets]
-
-    def get_vrt(self, wbw_env: WbEnvironment, out_dir: Path, outlet: Outlet):
-        dem_tiles = DEMTiles.from_outlet(
-            dem_source=self.dem_source,
-            outlet=outlet,
-            out_dir=out_dir,
-            outlet_snap_dist=self.config.hydrologic_analysis_config.outlet_snap_distance,
-            wbw_env=wbw_env,
-        )
-
-        return VRT.from_dem_tiles(dem_tiles, self.config.out_dir / 'dem.vrt')
 
     def get_trials(self) -> list[Trial]:
         return [
@@ -281,12 +203,7 @@ class OutletPlotBuilder(Builder):
                     name=trial_name,
                     outlet=outlet,
                     resolution=self.resolution,
-                    dem_provider=DynamicVRT(
-                        self.dem_source,
-                        outlet,
-                        self.config.out_dir / trial_name,
-                        outlet_snap_distance=self.config.hydrologic_analysis_config.outlet_snap_distance,
-                    ),
+                    dem=self.dem,
                     hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                     out_dir=self.config.out_dir / trial_name,
                 ),
@@ -295,56 +212,17 @@ class OutletPlotBuilder(Builder):
         ]
 
     def save_plot(self, trial_results: TrialResults) -> None:
+        plot_config = self.config.plot_config
+        if plot_config is None:
+            plot_config = SlopeAreaPlotConfig(
+                hue='slope_type',
+                col='trial',
+            )
         slope_area_grid(
             data=trial_results.to_dataframe(),
-            col='trial',
             out_fig=self.config.out_dir / 'slope_area.png',
-            config=self.config.plot_config or SlopeAreaPlotConfig(),
+            config=plot_config,
         )
-
-
-class DEMProvider(t.Protocol):
-    def get_dem(
-        self,
-        *,
-        wbw_env: WbEnvironment,
-        logger: AnyLogger | None = None,
-    ) -> Raster: ...
-
-
-@dataclass
-class StaticDEM(DEMProvider):
-    dem: Raster
-
-    def get_dem(self, *args, **kwargs) -> Raster:
-        return self.dem
-
-
-@dataclass
-class DynamicVRT(DEMProvider):
-    dem_source: DEMSource
-    outlet: Outlet
-    out_dir: PathLike
-    outlet_snap_distance: float
-
-    def get_dem(
-        self,
-        *,
-        wbw_env: WbEnvironment,
-        logger: AnyLogger | None = None,
-    ) -> VRT:
-        if wbw_env is None:
-            raise
-        dem_tiles = DEMTiles.from_outlet(
-            dem_source=self.dem_source,
-            outlet=self.outlet,
-            out_dir=self.out_dir,
-            outlet_snap_dist=self.outlet_snap_distance,
-            wbw_env=wbw_env,
-            logger=logger,
-        )
-
-        return VRT.from_dem_tiles(dem_tiles, Path(self.out_dir) / 'dem.vrt')
 
 
 @dataclass
@@ -352,8 +230,8 @@ class TrialConfig:
     name: str
     outlet: Outlet
     resolution: Resolution
+    dem: DEMProvider | Raster | PathLike
     hydrologic_analysis_config: HydrologicAnalysisConfig
-    dem_provider: DEMProvider
     out_dir: Path
 
     def __post_init__(self):
@@ -391,6 +269,18 @@ class Trial:
         if self._saga_env is None:
             self._saga_env = get_saga_env(self.logger_adapter)
         return self._saga_env
+
+    def get_dem(self) -> Raster:
+        if isinstance(self.config.dem, DEMProvider):
+            self.log('Getting the DEM raster from dem_provider')
+            return self.config.dem.get_dem(
+                outlet=self.config.outlet,
+                wbw_env=self.wbw_env,
+                logger=self.logger_adapter,
+            )
+        elif isinstance(self.config.dem, PathLike):
+            return Raster(self.config.dem)
+        return self.config.dem
 
     def get_resampled_dem(self, raster: Raster) -> Path:
         dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
@@ -432,6 +322,21 @@ class Trial:
         ).to_whitebox_vector()
         return hydro_analysis.compute_slope_gradient(
             wbw_outlet, config=self.config.hydrologic_analysis_config
+        )
+
+    def get_main_stream_as_points(
+        self, slope_grad: SlopeGradientComputationOutput
+    ) -> WhiteboxVector:
+        main_stream_path = self.config.out_dir / 'main_stream.shp'
+        main_stream_profiles = self.wbw_env.raster_to_vector_points(
+            slope_grad.main_stream
+        )
+        return write_whitebox(
+            main_stream_profiles,
+            main_stream_path,
+            overwrite=True,
+            wbw_env=self.wbw_env,
+            logger=self.logger_adapter,
         )
 
     def get_streams_as_points(
@@ -555,14 +460,12 @@ class Trial:
         )
 
     def execute(self) -> TrialResult:
-        self.log('Getting the DEM raster from dem_provider')
-        dem = self.config.dem_provider.get_dem(
-            wbw_env=self.wbw_env, logger=self.logger_adapter
-        )
+        dem = self.get_dem()
         dem_resampled = self.get_resampled_dem(dem)
         slope_grad = self.get_slope_gradient(dem_resampled)
         slope_3x3 = self.get_3x3_slope(dem_resampled)
-        streams = self.get_streams_as_points(slope_grad)
+        # streams = self.get_streams_as_points(slope_grad)
+        streams = self.get_main_stream_as_points(slope_grad)
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)
         processed_profiles = self.process_profiles(profiles)
         return TrialResult(processed_profiles, self.config)
