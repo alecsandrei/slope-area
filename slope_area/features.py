@@ -44,14 +44,14 @@ class Raster:
         with rio.open(self.path) as src:
             return src.crs
 
-    def resample[T: PathLike](
+    def resample(
         self,
-        out_file: T,
+        out_file: PathLike,
         resolution: Resolution,
         crs: pyproj.CRS | None = None,
         *,
         logger: AnyLogger = m_logger,
-    ) -> T:
+    ) -> Raster:
         if crs is None:
             crs = self.crs
         reproject_kwargs = {
@@ -65,11 +65,13 @@ class Raster:
             'Resampling Raster %s at resolution=%s'
             % (Path(self.path).name, resolution)
         )
-        return resample(
-            self.path,
-            out_file,
-            res=resolution,
-            kwargs_reproject=reproject_kwargs,
+        return Raster(
+            resample(
+                self.path,
+                out_file,
+                res=resolution,
+                kwargs_reproject=reproject_kwargs,
+            )
         )
 
 

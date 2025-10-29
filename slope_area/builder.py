@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections import UserList
 import collections.abc as c
 import concurrent.futures
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from functools import cached_property
 import logging
 from logging.handlers import QueueHandler
@@ -24,7 +24,7 @@ from rich.live import Live
 from whitebox_workflows import WbEnvironment
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import DEMProvider
+from slope_area._typing import AnyLogger, DEMProvider
 from slope_area.config import (
     IS_NOTEBOOK,
     get_saga_env,
@@ -68,7 +68,8 @@ m_logger = create_logger(__name__)
 @dataclass(frozen=True)
 class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
-    out_dir: Path
+    out_dir: PathLike
+    out_fig: PathLike
     plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
 
@@ -85,61 +86,16 @@ class Builder(ABC):
     def trial_names(self) -> list[str]: ...
 
     @abstractmethod
-    def get_trials(self) -> list[Trial]: ...
+    def get_trials(self) -> Trials: ...
 
     @abstractmethod
     def save_plot(self, trial_results: TrialResults): ...
 
-    def run_trials(
-        self, trials: c.Iterable[Trial], logs: RichTableLogs
-    ) -> list[concurrent.futures.Future[TrialResult]]:
-        q = TrialQueue()
-        make_table_thread = threading.Thread(
-            target=rich_table_logs_thread,
-            args=(logs, q.rich),
-        )
-        with (
-            Live(
-                make_table(logs),
-                refresh_per_second=10,
-                redirect_stderr=True,
-                redirect_stdout=True,
-            ) as live,
-        ):
-            make_table_thread.start()
-            with concurrent.futures.ProcessPoolExecutor(
-                max_workers=self.config.max_workers
-            ) as executor:
-                futures = [
-                    executor.submit(trial.run_multiprocess, q, logs)
-                    for trial in trials
-                ]
-                while any(f.running() for f in futures):
-                    live.update(make_table(logs), refresh=IS_NOTEBOOK)
-                    time.sleep(0.1)
-                live.update(make_table(logs), refresh=IS_NOTEBOOK)
-
-            # stops the table thread
-            q.rich.put(None)
-            make_table_thread.join()
-        return futures
-
-    def build(self) -> None:
-        logs: RichTableLogs = {
-            name: RichTableRowData.from_trial_name(name)
-            for name in self.trial_names
-        }
+    def build(self) -> TrialResults:
         trials = self.get_trials()
-        futures = self.run_trials(trials, logs)
-        trial_results = TrialResults(
-            [
-                result
-                for future in futures
-                if future.exception() is None
-                and (result := future.result()) is not None
-            ]
-        )
-        self.save_plot(trial_results)
+        results = trials.run(self.config.max_workers)
+        self.save_plot(results)
+        return results
 
 
 @dataclass
@@ -155,22 +111,24 @@ class ResolutionPlotBuilder(Builder):
             f'{resolution[0]} {unit_name}' for resolution in self.resolutions
         ]
 
-    def get_trials(self) -> list[Trial]:
-        return [
-            Trial(
-                config=TrialConfig(
-                    name=trial_name,
-                    outlet=self.outlet,
-                    resolution=resolution,
-                    hydrologic_analysis_config=self.config.hydrologic_analysis_config,
-                    dem=self.dem,
-                    out_dir=self.config.out_dir / trial_name,
-                ),
-            )
-            for trial_name, resolution in zip(
-                self.trial_names, self.resolutions
-            )
-        ]
+    def get_trials(self) -> Trials:
+        return Trials(
+            [
+                Trial(
+                    config=TrialConfig(
+                        name=trial_name,
+                        outlet=self.outlet,
+                        resolution=resolution,
+                        hydrologic_analysis_config=self.config.hydrologic_analysis_config,
+                        dem=self.dem,
+                        out_dir=self.config.out_dir / trial_name,
+                    ),
+                )
+                for trial_name, resolution in zip(
+                    self.trial_names, self.resolutions
+                )
+            ]
+        )
 
     def save_plot(self, trial_results: TrialResults) -> None:
         plot_config = self.config.plot_config
@@ -190,26 +148,28 @@ class ResolutionPlotBuilder(Builder):
 class OutletPlotBuilder(Builder):
     dem: AnyDEM
     outlets: Outlets
-    resolution: Resolution
+    resolution: Resolution | None = None
 
     @cached_property
     def trial_names(self) -> list[str]:
         return [str(outlet) for outlet in self.outlets]
 
-    def get_trials(self) -> list[Trial]:
-        return [
-            Trial(
-                config=TrialConfig(
-                    name=trial_name,
-                    outlet=outlet,
-                    resolution=self.resolution,
-                    dem=self.dem,
-                    hydrologic_analysis_config=self.config.hydrologic_analysis_config,
-                    out_dir=self.config.out_dir / trial_name,
-                ),
-            )
-            for trial_name, outlet in zip(self.trial_names, self.outlets)
-        ]
+    def get_trials(self) -> Trials:
+        return Trials(
+            [
+                Trial(
+                    config=TrialConfig(
+                        name=trial_name,
+                        outlet=outlet,
+                        resolution=self.resolution,
+                        dem=self.dem,
+                        hydrologic_analysis_config=self.config.hydrologic_analysis_config,
+                        out_dir=self.config.out_dir / trial_name,
+                    ),
+                )
+                for trial_name, outlet in zip(self.trial_names, self.outlets)
+            ]
+        )
 
     def save_plot(self, trial_results: TrialResults) -> None:
         plot_config = self.config.plot_config
@@ -229,10 +189,10 @@ class OutletPlotBuilder(Builder):
 class TrialConfig:
     name: str
     outlet: Outlet
-    resolution: Resolution
     dem: DEMProvider | Raster | PathLike
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
+    resolution: Resolution | None = None
 
     def __post_init__(self):
         makedirs(self.out_dir, exist_ok=True)
@@ -258,6 +218,23 @@ class Trial:
         init=False, default=None, repr=False
     )
 
+    # __gestate__ and __setstate__ make this object picklable
+
+    def __getstate__(self) -> dict[str, t.Any]:
+        # Return a shallow copy of __dict__ minus unpickleable fields
+        state = self.__dict__.copy()
+        # Remove unpicklable or environment-specific attributes
+        state.pop('_wbw_env', None)
+        state.pop('_saga_env', None)
+        return state
+
+    def __setstate__(self, state):
+        # Restore the pickled state
+        self.__dict__.update(state)
+        # Reinitialize transient attributes
+        self._wbw_env = None
+        self._saga_env = None
+
     @property
     def wbw_env(self) -> WbEnvironment:
         if self._wbw_env is None:
@@ -282,7 +259,8 @@ class Trial:
             return Raster(self.config.dem)
         return self.config.dem
 
-    def get_resampled_dem(self, raster: Raster) -> Path:
+    def get_resampled_dem(self, raster: Raster) -> Raster:
+        assert self.config.resolution is not None
         dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
         crs = raster.crs
         if not crs.is_projected:
@@ -299,7 +277,7 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_3x3_slope(self, dem: Path) -> SAGARaster:
+    def get_3x3_slope(self, dem: PathLike) -> SAGARaster:
         slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
             get_saga_raster_suffix(self.saga_env)
         )
@@ -310,7 +288,9 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_slope_gradient(self, dem: Path) -> SlopeGradientComputationOutput:
+    def get_slope_gradient(
+        self, dem: PathLike
+    ) -> SlopeGradientComputationOutput:
         hydro_analysis = HydrologicAnalysis(
             dem,
             out_dir=self.config.out_dir,
@@ -461,9 +441,10 @@ class Trial:
 
     def execute(self) -> TrialResult:
         dem = self.get_dem()
-        dem_resampled = self.get_resampled_dem(dem)
-        slope_grad = self.get_slope_gradient(dem_resampled)
-        slope_3x3 = self.get_3x3_slope(dem_resampled)
+        if self.config.resolution is not None:
+            dem = self.get_resampled_dem(dem)
+        slope_grad = self.get_slope_gradient(dem.path)
+        slope_3x3 = self.get_3x3_slope(dem.path)
         # streams = self.get_streams_as_points(slope_grad)
         streams = self.get_main_stream_as_points(slope_grad)
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)
@@ -490,6 +471,89 @@ class Trial:
             self.logger_adapter.mark_finished()
         finally:
             return ret
+
+
+class Trials(UserList[Trial]):
+    def run(self, max_workers: int | None = None) -> TrialResults:
+        executor = TrialsExecutor(self, max_workers)
+        return executor.run()
+
+
+@dataclass
+class TrialsExecutor:
+    trials: Trials
+    max_workers: int | None = None
+    _logger: AnyLogger = field(repr=False, init=False)
+    logs: RichTableLogs = field(init=False, repr=False)
+    q: TrialQueue = field(init=False, repr=False)
+    logger: InitVar[AnyLogger | None] = field(kw_only=True, default=None)
+
+    def __post_init__(self, logger: AnyLogger | None):
+        self._logger = logger or m_logger.getChild(self.__class__.__name__)
+        self.logs = self.get_rich_init_logs()
+        self.q = TrialQueue()
+
+    def get_rich_init_logs(self) -> RichTableLogs:
+        return {
+            trial.config.name: RichTableRowData.from_trial_name(
+                trial.config.name
+            )
+            for trial in self.trials
+        }
+
+    def submit_trials(
+        self, executor: concurrent.futures.Executor
+    ) -> list[concurrent.futures.Future[TrialResult]]:
+        return [
+            executor.submit(trial.run_multiprocess, self.q, self.logs)
+            for trial in self.trials
+        ]
+
+    def update_loop(
+        self,
+        live: Live,
+        futures: c.Sequence[concurrent.futures.Future[TrialResult]],
+    ):
+        while any(f.running() for f in futures):
+            live.update(make_table(self.logs), refresh=IS_NOTEBOOK)
+            time.sleep(0.1)
+        live.update(make_table(self.logs), refresh=IS_NOTEBOOK)
+
+    def gather(
+        self, futures: c.Sequence[concurrent.futures.Future[TrialResult]]
+    ) -> TrialResults:
+        self._logger.info('Gathering results of trial executor')
+        results = TrialResults()
+        for i, future in enumerate(futures):
+            if (exc := future.exception()) is not None:
+                self._logger.debug(
+                    'Trial %s failed with error %s' % (self.trials[i], exc)
+                )
+            results.append(future.result())
+        return results
+
+    def run(self) -> TrialResults:
+        make_table_thread = threading.Thread(
+            target=rich_table_logs_thread,
+            args=(self.logs, self.q.rich),
+        )
+        with Live(
+            make_table(self.logs),
+            refresh_per_second=10,
+            redirect_stderr=True,
+            redirect_stdout=True,
+        ) as live:
+            make_table_thread.start()
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=self.max_workers
+            ) as executor:
+                futures = self.submit_trials(executor)
+                self.update_loop(live, futures)
+
+            # stop table thread
+            self.q.rich.put(None)
+            make_table_thread.join()
+        return self.gather(futures)
 
 
 @dataclass

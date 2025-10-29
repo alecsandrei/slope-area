@@ -122,7 +122,7 @@ def set_plot_options(config: SlopeAreaPlotConfig, ax: Axes) -> None:
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-    ax.set_box_aspect(1)
+    ax.set_box_aspect(config.aspect)
 
     if config.hue is not None:
         ax.legend(fontsize=config.legend_font_size)

@@ -14,6 +14,7 @@ from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area._typing import AnyLogger
 from slope_area.config import get_saga_env, get_wbw_env
+from slope_area.features import Raster
 from slope_area.logger import create_logger
 from slope_area.utils import (
     suppress_stdout_stderr,
@@ -213,7 +214,7 @@ class HydrologicAnalysis:
 
 
 def compute_slope(
-    elevation: PathLike,
+    elevation: PathLike | Raster,
     out_slope: PathLike,
     *,
     saga_env: PySAGA_cmd.SAGA | None = None,
