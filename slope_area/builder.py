@@ -522,7 +522,7 @@ class TrialsExecutor:
     def gather(
         self, futures: c.Sequence[concurrent.futures.Future[TrialResult]]
     ) -> TrialResults:
-        self._logger.info('Gathering results of trial executor')
+        self._logger.info('Gathering results of TrialsExecutor')
         results = TrialResults()
         for i, future in enumerate(futures):
             if (exc := future.exception()) is not None:
