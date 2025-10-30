@@ -82,7 +82,7 @@ def slope_area_plot_func(
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
-def get_col_wrap(n_unique: int):
+def get_col_wrap(n_unique: int) -> int:
     for wrap in range(5, 2, -1):
         if n_unique % wrap == 0:
             col_wrap = wrap
