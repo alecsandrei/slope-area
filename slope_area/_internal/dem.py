@@ -317,14 +317,12 @@ class DynamicVRT(DEMProvider):
 
     def get_dem(
         self,
-        *,
         outlet: Outlet,
-        wbw_env: WbEnvironment | None = None,
+        *,
         logger: AnyLogger | None = None,
     ) -> VRT:
-        if wbw_env is None:
-            wbw_env = get_wbw_env()
-
+        if logger is None:
+            logger = m_logger.getChild(self.__class__.__name__)
         out_dir = Path(self.out_parent) / outlet.name
         makedirs(out_dir, exist_ok=True)
         dem_tiles = DEMTiles.from_outlet(
@@ -332,7 +330,7 @@ class DynamicVRT(DEMProvider):
             outlet=outlet,
             out_dir=Path(self.out_parent) / outlet.name,
             outlet_snap_dist=self.outlet_snap_distance,
-            wbw_env=wbw_env,
+            wbw_env=get_wbw_env(logger),
             logger=logger,
         )
         vrt = VRT.from_dem_tiles(dem_tiles, out_dir / 'dem.vrt')

@@ -7,8 +7,6 @@ import typing as t
 if t.TYPE_CHECKING:
     from os import PathLike
 
-    from whitebox_workflows.whitebox_workflows import WbEnvironment
-
     from slope_area.console import RichTableRowData
     from slope_area.enums import TrialStatus
     from slope_area.features import Outlet, Raster
@@ -39,8 +37,7 @@ class WKTProvider(t.Protocol):
 class DEMProvider(t.Protocol):
     def get_dem(
         self,
-        *,
         outlet: Outlet,
-        wbw_env: WbEnvironment | None = None,
+        *,
         logger: AnyLogger | None = None,
     ) -> Raster: ...

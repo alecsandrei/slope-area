@@ -253,7 +253,6 @@ class Trial:
             self.log('Getting the DEM raster from dem_provider')
             return self.config.dem.get_dem(
                 outlet=self.config.outlet,
-                wbw_env=self.wbw_env,
                 logger=self.logger_adapter,
             )
         elif isinstance(self.config.dem, (str, PathLike)):
