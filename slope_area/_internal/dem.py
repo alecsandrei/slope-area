@@ -16,7 +16,6 @@ import shapely
 from shapely.geometry.base import BaseGeometry
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 
-from slope_area._typing import AnyLogger, DEMProvider
 from slope_area.config import get_wbw_env
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
@@ -27,9 +26,9 @@ from slope_area.logger import create_logger
 from slope_area.utils import redirect_warnings, timeit, write_whitebox
 
 if t.TYPE_CHECKING:
-    from os import PathLike
-
     from whitebox_workflows.whitebox_workflows import WbEnvironment
+
+    from slope_area._typing import AnyLogger, DEMProvider, StrPath
 
 
 m_logger = create_logger(__name__)
@@ -59,7 +58,7 @@ class VRT(Raster):
 
 @dataclass(frozen=True, eq=True)
 class GeneralizedDEM(Raster):
-    out_dir: PathLike
+    out_dir: StrPath
 
     @property
     def dem_preproc(self) -> WhiteboxRaster:
@@ -74,7 +73,7 @@ class GeneralizedDEM(Raster):
         return self.get_flow_output().flow_accumulation
 
     def read_rasters(
-        self, rasters: c.Iterable[PathLike]
+        self, rasters: c.Iterable[StrPath]
     ) -> list[WhiteboxRaster]:
         return [get_wbw_env().read_raster(fspath(raster)) for raster in rasters]
 
@@ -142,12 +141,12 @@ class FeatureCollection(t.TypedDict):
 
 @dataclass
 class DEMTilesBuilder:
-    dem_dir: PathLike
+    dem_dir: StrPath
     dem_dir_epsg: int
-    tiles: PathLike
+    tiles: StrPath
     _logger: logging.Logger = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._logger = m_logger.getChild(self.__class__.__name__)
 
     def build(self) -> Path:
@@ -211,19 +210,19 @@ class DEMTilesBuilder:
 
 @dataclass
 class DEMTiles:
-    dem_dir: PathLike
+    dem_dir: StrPath
     gdf: gpd.GeoDataFrame = field(repr=False)
     logger: InitVar[AnyLogger | None] = field(kw_only=True, default=None)
     _logger: AnyLogger = field(init=False, repr=False)
 
-    def __post_init__(self, logger: AnyLogger | None):
+    def __post_init__(self, logger: AnyLogger | None) -> None:
         self._logger = logger or m_logger.getChild(self.__class__.__name__)
 
     @classmethod
     def from_polygon(
         cls,
-        dem_dir: PathLike,
-        tiles: PathLike,
+        dem_dir: StrPath,
+        tiles: StrPath,
         polygon: shapely.Polygon | shapely.MultiPolygon,
         *,
         logger: AnyLogger | None = None,
@@ -243,7 +242,7 @@ class DEMTiles:
         cls,
         dem_source: DEMSource,
         outlet: Outlet,
-        out_dir: PathLike,
+        out_dir: StrPath,
         outlet_snap_dist: float = 100,
         wbw_env: WbEnvironment | None = None,
         *,
@@ -289,7 +288,7 @@ class DEMTiles:
 @dataclass
 class DynamicVRT(DEMProvider):
     dem_source: DEMSource
-    out_parent: PathLike
+    out_parent: StrPath
     outlet_snap_distance: float
 
     def get_dem(
@@ -307,7 +306,7 @@ class DynamicVRT(DEMProvider):
         dem_tiles = DEMTiles.from_outlet(
             dem_source=self.dem_source,
             outlet=outlet,
-            out_dir=self.out_parent / outlet.name,
+            out_dir=Path(self.out_parent) / outlet.name,
             outlet_snap_dist=self.outlet_snap_distance,
             wbw_env=wbw_env,
             logger=logger,

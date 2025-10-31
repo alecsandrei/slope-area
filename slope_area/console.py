@@ -8,9 +8,11 @@ import typing as t
 from rich import box
 from rich.table import Table
 
-from slope_area._typing import RichTableLogs
 from slope_area.enums import TrialStatus
 from slope_area.logger import RichDictHandler, create_logger
+
+if t.TYPE_CHECKING:
+    from slope_area._typing import RichTableLogs
 
 m_logger = create_logger(__name__)
 
@@ -43,7 +45,7 @@ def make_table(logs: RichTableLogs) -> Table:
 
 
 def create_rich_logger(
-    logger_name: str, logs: RichTableLogs, q: queue.Queue
+    logger_name: str, logs: RichTableLogs, q: queue.Queue[RichTableLogs | None]
 ) -> logging.Logger:
     r_logger = m_logger.getChild(logger_name)
     rich_handler = RichDictHandler(logs, q)
@@ -51,7 +53,9 @@ def create_rich_logger(
     return r_logger
 
 
-def rich_table_logs_thread(logs: RichTableLogs, q: queue.Queue):
+def rich_table_logs_thread(
+    logs: RichTableLogs, q: queue.Queue[RichTableLogs]
+) -> None:
     while True:
         trial_log: RichTableLogs = q.get()
         if trial_log is None:

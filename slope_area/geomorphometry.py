@@ -12,9 +12,7 @@ from PySAGA_cmd import Raster as SAGARaster
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import AnyLogger
 from slope_area.config import get_saga_env, get_wbw_env
-from slope_area.features import Raster
 from slope_area.logger import create_logger
 from slope_area.utils import (
     suppress_stdout_stderr,
@@ -24,6 +22,8 @@ from slope_area.utils import (
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
+
+    from slope_area._typing import AnyLogger, StrPath
 
 m_logger = create_logger(__name__)
 
@@ -63,8 +63,8 @@ class HydrologicAnalysisConfig:
 
 @dataclass
 class HydrologicAnalysis:
-    dem: PathLike | WhiteboxRaster
-    out_dir: PathLike
+    dem: StrPath | WhiteboxRaster
+    out_dir: StrPath
     wbw_env: InitVar[WbEnvironment | None] = field(
         repr=False, kw_only=True, default=None
     )
@@ -74,7 +74,7 @@ class HydrologicAnalysis:
 
     def __post_init__(
         self, wbw_env: WbEnvironment | None, logger: AnyLogger | None
-    ):
+    ) -> None:
         self._logger = logger or m_logger.getChild(self.__class__.__name__)
         self._wbw_env = wbw_env or get_wbw_env(self._logger)
         makedirs(self.out_dir, exist_ok=True)
@@ -115,11 +115,11 @@ class HydrologicAnalysis:
     @timeit(m_logger, logging.DEBUG)
     def compute_watershed(
         self,
-        outlet: WhiteboxVector | PathLike,
+        outlet: WhiteboxVector | StrPath,
         outlet_snap_dist: int | None = None,
         dem_preproc: WhiteboxRaster | None = None,
     ) -> WatershedComputationOutput:
-        if isinstance(outlet, PathLike):
+        if isinstance(outlet, (str, PathLike)):
             self._logger.info('Reading the outlet %s' % outlet)
             outlet = self._wbw_env.read_vector(fspath(outlet))
         flow_output = self.compute_flow(dem_preproc)
@@ -138,7 +138,7 @@ class HydrologicAnalysis:
     @timeit(m_logger, logging.DEBUG)
     def compute_slope_gradient(
         self,
-        outlet: WhiteboxVector | PathLike,
+        outlet: WhiteboxVector | StrPath,
         config: HydrologicAnalysisConfig,
     ) -> SlopeGradientComputationOutput:
         out_dir = Path(self.out_dir)
@@ -148,7 +148,7 @@ class HydrologicAnalysis:
             overwrite=True,
             wbw_env=self._wbw_env,
         )
-        if isinstance(outlet, PathLike):
+        if isinstance(outlet, (str, PathLike)):
             self._logger.info('Reading the outlet %s' % outlet)
             outlet = self._wbw_env.read_vector(fspath(outlet))
 
@@ -214,8 +214,8 @@ class HydrologicAnalysis:
 
 
 def compute_slope(
-    elevation: PathLike | Raster,
-    out_slope: PathLike,
+    elevation: StrPath,
+    out_slope: StrPath,
     *,
     saga_env: PySAGA_cmd.SAGA | None = None,
     logger: AnyLogger = m_logger,
@@ -223,7 +223,9 @@ def compute_slope(
     if saga_env is None:
         saga_env = get_saga_env(logger)
     tool = saga_env / 'ta_morphometry' / 'Slope, Aspect, Curvature'
-    logger.info('Computing slope for DEM %s' % Path(elevation).name)
+    logger.info(
+        'Computing slope for elevation raster %s' % Path(elevation).name
+    )
     return tool.execute(
         verbose=False,
         elevation=elevation,

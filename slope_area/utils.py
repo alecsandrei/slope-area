@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc as c
 import contextlib
 from contextlib import contextmanager
 import copy
@@ -19,20 +20,19 @@ from rasterio.warp import Resampling
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import AnyLogger, Resolution
 from slope_area.config import IS_NOTEBOOK, get_wbw_env
 from slope_area.logger import create_logger, turn_off_handlers
 
 if t.TYPE_CHECKING:
-    from os import PathLike
-
     from whitebox_workflows.whitebox_workflows import WbEnvironment
+
+    from slope_area._typing import AnyLogger, Resolution, StrPath
 
 m_logger = create_logger(__name__)
 
 
-def resample[T: PathLike](
-    path: PathLike,
+def resample[T: StrPath](
+    path: StrPath,
     dest: T,
     res: Resolution,
     kwargs_reproject: dict[str, t.Any] | None = None,
@@ -51,9 +51,9 @@ def resample[T: PathLike](
             *ds.bounds,
             resolution=res,
         )
-        newarr = np.ma.asanyarray(
+        newarr = np.ma.asanyarray(  # type: ignore[no-untyped-call]
             np.empty(
-                shape=(1, t.cast(int, height), t.cast(int, width)),
+                shape=(1, height, width),
                 dtype=arr.dtype,
             )
         )
@@ -113,7 +113,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     return output
 
 
-def extract_class_name_from_args(args) -> str | None:
+def extract_class_name_from_args(args: c.Sequence[t.Any]) -> str | None:
     cls_name = None
     if args:
         instance = args[0]
@@ -124,10 +124,16 @@ def extract_class_name_from_args(args) -> str | None:
     return cls_name
 
 
-def timeit(logger: AnyLogger | None = None, level: int = logging.INFO):
-    def decorator(func):
+P = t.ParamSpec('P')
+R = t.TypeVar('R')
+
+
+def timeit(
+    logger: AnyLogger | None = None, level: int = logging.INFO
+) -> c.Callable[[c.Callable[P, R]], c.Callable[P, R]]:
+    def decorator(func: c.Callable[P, R]) -> c.Callable[P, R]:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             start = time.perf_counter()
             result = func(*args, **kwargs)
             duration = time.perf_counter() - start
@@ -149,10 +155,10 @@ def timeit(logger: AnyLogger | None = None, level: int = logging.INFO):
 
 @contextmanager
 def redirect_warnings(
-    logger: logging.Logger | logging.LoggerAdapter,
+    logger: AnyLogger,
     warning_category: t.Type[Warning],
     module: str,
-):
+) -> c.Generator[None]:
     """Redirects all warnings to logger, disabling all handlers except slopeAreaFile.
 
     This was written due to the many warnings displayed by GDAL with the
@@ -162,8 +168,11 @@ def redirect_warnings(
     curr_showwarning = copy.copy(warnings.showwarning)
     spec = importlib.util.find_spec(module)
 
-    def showwarning(message, category, filename, lineno, file=None, line=None):
-        if category is warning_category and filename == spec.origin:
+    def showwarning(message, category, filename, lineno, file=None, line=None):  # type: ignore[no-untyped-def]
+        origin = None
+        if spec is not None:
+            origin = spec.origin
+        if category is warning_category and filename == origin:
             with turn_off_handlers('slopeArea', ('stdout', 'stderr')):
                 logger.warning(
                     str(message),
@@ -184,7 +193,7 @@ def redirect_warnings(
 
 
 @contextmanager
-def suppress_stdout_stderr_notebook():
+def suppress_stdout_stderr_notebook() -> c.Generator[None]:
     # This does not work, it's here as a placeholder
     # I do not think it's possible to make it work for Jupyter Notebooks
     with open(os.devnull, 'w') as f:
@@ -193,7 +202,7 @@ def suppress_stdout_stderr_notebook():
 
 
 @contextmanager
-def suppress_stdout_stderr_terminal():
+def suppress_stdout_stderr_terminal() -> c.Generator[None]:
     stdout_fd = sys.stdout.fileno()
     stderr_fd = sys.stderr.fileno()
     old_stdout = os.dup(stdout_fd)
@@ -214,7 +223,7 @@ def suppress_stdout_stderr_terminal():
 
 
 @contextmanager
-def suppress_stdout_stderr():
+def suppress_stdout_stderr() -> c.Generator[None]:
     if IS_NOTEBOOK:
         with suppress_stdout_stderr_notebook():
             yield

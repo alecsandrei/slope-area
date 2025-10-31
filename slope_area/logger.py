@@ -73,8 +73,12 @@ class ColoredFormatter(logging.Formatter):
     """
 
     def __init__(
-        self, fmt=None, datefmt=None, style='%', use_colors: bool = True
-    ):
+        self,
+        fmt: str | None = None,
+        datefmt: str | None = None,
+        style: t.Literal['%', '{', '$'] = '%',
+        use_colors: bool = True,
+    ) -> None:
         super().__init__(fmt=fmt, datefmt=datefmt, style=style)
         self.use_colors = use_colors and self._stream_supports_color()
 
@@ -116,7 +120,9 @@ class JSONFormatter(logging.Formatter):
         message = self._prepare_log_dict(record)
         return json.dumps(message, default=str)
 
-    def _prepare_log_dict(self, record: logging.LogRecord):
+    def _prepare_log_dict(
+        self, record: logging.LogRecord
+    ) -> dict[str, str | None]:
         always_fields = {
             'message': record.getMessage(),
             'timestamp': dt.datetime.fromtimestamp(
@@ -153,7 +159,9 @@ class ErrorFilter(logging.Filter):
 
 
 class RichDictHandler(logging.Handler):
-    def __init__(self, logs: RichTableLogs, queue: queue.Queue):
+    def __init__(
+        self, logs: RichTableLogs, queue: queue.Queue[RichTableLogs | None]
+    ) -> None:
         super().__init__()
         self.queue = queue
         self.logs = logs
@@ -169,10 +177,10 @@ class RichDictHandler(logging.Handler):
         record.levelname = levelname
         return formatted
 
-    def emit(self, record: logging.LogRecord):
+    def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
         trial_name: str = getattr(record, 'trialName')
-        trial_context: TrialLoggingContext | dict = getattr(
+        trial_context: TrialLoggingContext | dict[str, t.Any] = getattr(
             record, 'trialContext', {}
         )
 
@@ -193,13 +201,13 @@ class RichDictHandler(logging.Handler):
         self.queue.put_nowait({trial_name: curr_data})
 
 
-class TrialLoggerAdapter(logging.LoggerAdapter):
+class TrialLoggerAdapter(logging.LoggerAdapter[logging.Logger]):
     def __init__(
         self,
-        logger,
+        logger: logging.Logger,
         trial_name: str,
         trial_context: TrialLoggingContext | None = None,
-    ):
+    ) -> None:
         super().__init__(logger)
         self.logger = logger
         self.trial_name = trial_name
@@ -220,7 +228,7 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
         *,
         status: TrialStatus | None = None,
         exc: Exception | None = None,
-    ):
+    ) -> None:
         trial_context: TrialLoggingContext = {}
         if status is not None:
             trial_context['trialStatus'] = status
@@ -230,21 +238,21 @@ class TrialLoggerAdapter(logging.LoggerAdapter):
 
         self.log(level, msg, stacklevel=3)
 
-    def mark_running(self):
+    def mark_running(self) -> None:
         self._log_with_context(
             logging.INFO,
             'Running...',
             status=TrialStatus.RUNNING,
         )
 
-    def mark_finished(self):
+    def mark_finished(self) -> None:
         self._log_with_context(
             logging.INFO,
             'Finished with success!',
             status=TrialStatus.FINISHED,
         )
 
-    def mark_error(self, exc: Exception):
+    def mark_error(self, exc: Exception) -> None:
         self._log_with_context(
             logging.ERROR,
             f'Error: {exc}',
@@ -261,7 +269,7 @@ def create_logger(name: str) -> logging.Logger:
 @contextmanager
 def turn_off_handlers(
     logger: str | AnyLogger, handlers: c.Sequence[str] | None = None
-):
+) -> c.Generator[None]:
     if isinstance(logger, str):
         logger = logging.getLogger(logger)
     elif isinstance(logger, logging.LoggerAdapter):
@@ -278,7 +286,7 @@ def turn_off_handlers(
         logger.handlers = saved_handlers
 
 
-def setup_logging():
+def setup_logging() -> None:
     with LOGGING_CONFIG.open() as file:
         config = json.load(file)
     config['handlers']['slopeAreaFile']['filename'] = (
@@ -287,5 +295,5 @@ def setup_logging():
     logging.config.dictConfig(config)
 
 
-def turn_off_logging():
+def turn_off_logging() -> None:
     logging.getLogger('slopeArea').disabled = True

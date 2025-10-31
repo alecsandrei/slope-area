@@ -9,15 +9,16 @@ if t.TYPE_CHECKING:
 
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
-    from slope_area.builder import RichTableRowData
+    from slope_area.console import RichTableRowData
     from slope_area.enums import TrialStatus
     from slope_area.features import Outlet, Raster
 
+type StrPath = str | PathLike[str]
 type PlotKind = t.Literal['line', 'scatter']
-type AnyLogger = logging.Logger | logging.LoggerAdapter
-type AnyDEM = DEMProvider | Raster | PathLike
+type AnyLogger = logging.Logger | logging.LoggerAdapter[logging.Logger]
+type AnyDEM = DEMProvider | Raster | StrPath
 
-type Resolution[T: (int, float)] = tuple[T, T]
+type Resolution = tuple[int, int] | tuple[float, float]
 
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]

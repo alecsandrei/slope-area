@@ -21,15 +21,12 @@ from whitebox_workflows import (
 )
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import AnyLogger, Resolution
 from slope_area.config import get_wbw_env
 from slope_area.logger import create_logger
-from slope_area.utils import (
-    resample,
-)
+from slope_area.utils import resample
 
 if t.TYPE_CHECKING:
-    from os import PathLike
+    from slope_area._typing import AnyLogger, Resolution, StrPath
 
 
 m_logger = create_logger(__name__)
@@ -37,16 +34,18 @@ m_logger = create_logger(__name__)
 
 @dataclass(frozen=True, eq=True)
 class Raster:
-    path: PathLike
+    path: StrPath
 
     @property
     def crs(self) -> pyproj.CRS:
         with rio.open(self.path) as src:
-            return src.crs
+            ret = src.crs
+            assert isinstance(ret, pyproj.CRS)
+            return ret
 
     def resample(
         self,
-        out_file: PathLike,
+        out_file: StrPath,
         resolution: Resolution,
         crs: pyproj.CRS | None = None,
         *,
@@ -77,12 +76,9 @@ class Raster:
 
 @dataclass(frozen=True, eq=True)
 class Outlet:
+    name: str
     geom: shapely.Point
     crs: pyproj.CRS
-    name: str | None = None
-
-    def __str__(self) -> str:
-        return self.name or ''
 
     def __repr__(self) -> str:
         return f'Outlet(geom={self.geom}, crs={self.crs.to_epsg()}, name={self.name})'
@@ -110,9 +106,9 @@ class Outlets(UserList[Outlet]):
             Outlet(
                 geom=row.geometry,
                 crs=crs,
-                name=(row[name_field] if name_field else None),
+                name=(row[name_field] if name_field else str(i)),
             )
-            for _, row in gdf.iterrows()
+            for i, row in gdf.iterrows()
         ]
         return cls(outlets, crs=crs)
 

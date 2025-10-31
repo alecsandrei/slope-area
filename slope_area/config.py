@@ -39,7 +39,7 @@ def get_saga_raster_suffix(saga: PySAGA_cmd.SAGA) -> str:
         return '.tif'
 
 
-def is_notebook(logger: AnyLogger):
+def is_notebook(logger: AnyLogger) -> bool:
     try:
         ipython = sys.modules['IPython']
         config = ipython.get_ipython().config

@@ -58,6 +58,7 @@ if t.TYPE_CHECKING:
         AnyDEM,
         Resolution,
         RichTableLogs,
+        StrPath,
         TrialLoggingContext,
     )
 
@@ -68,12 +69,12 @@ m_logger = create_logger(__name__)
 @dataclass(frozen=True)
 class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
-    out_dir: PathLike
-    out_fig: PathLike
+    out_dir: StrPath
+    out_fig: StrPath
     plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         makedirs(self.out_dir, exist_ok=True)
 
 
@@ -89,7 +90,7 @@ class Builder(ABC):
     def get_trials(self) -> Trials: ...
 
     @abstractmethod
-    def save_plot(self, trial_results: TrialResults): ...
+    def save_plot(self, trial_results: TrialResults) -> None: ...
 
     def build(self) -> TrialResults:
         trials = self.get_trials()
@@ -100,7 +101,7 @@ class Builder(ABC):
 
 @dataclass
 class ResolutionPlotBuilder(Builder):
-    dem: DEMProvider | Raster | PathLike
+    dem: DEMProvider | Raster | StrPath
     outlet: Outlet
     resolutions: c.Sequence[Resolution]
 
@@ -121,7 +122,7 @@ class ResolutionPlotBuilder(Builder):
                         resolution=resolution,
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                         dem=self.dem,
-                        out_dir=self.config.out_dir / trial_name,
+                        out_dir=Path(self.config.out_dir) / trial_name,
                     ),
                 )
                 for trial_name, resolution in zip(
@@ -139,7 +140,7 @@ class ResolutionPlotBuilder(Builder):
             )
         slope_area_grid(
             data=trial_results.to_dataframe(),
-            out_fig=self.config.out_dir / 'slope_area.png',
+            out_fig=Path(self.config.out_dir) / 'slope_area.png',
             config=plot_config,
         )
 
@@ -152,7 +153,7 @@ class OutletPlotBuilder(Builder):
 
     @cached_property
     def trial_names(self) -> list[str]:
-        return [str(outlet) for outlet in self.outlets]
+        return [outlet.name for outlet in self.outlets]
 
     def get_trials(self) -> Trials:
         return Trials(
@@ -164,7 +165,7 @@ class OutletPlotBuilder(Builder):
                         resolution=self.resolution,
                         dem=self.dem,
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
-                        out_dir=self.config.out_dir / trial_name,
+                        out_dir=Path(self.config.out_dir) / trial_name,
                     ),
                 )
                 for trial_name, outlet in zip(self.trial_names, self.outlets)
@@ -180,7 +181,7 @@ class OutletPlotBuilder(Builder):
             )
         slope_area_grid(
             data=trial_results.to_dataframe(),
-            out_fig=self.config.out_dir / 'slope_area.png',
+            out_fig=Path(self.config.out_dir) / 'slope_area.png',
             config=plot_config,
         )
 
@@ -189,21 +190,21 @@ class OutletPlotBuilder(Builder):
 class TrialConfig:
     name: str
     outlet: Outlet
-    dem: DEMProvider | Raster | PathLike
+    dem: DEMProvider | Raster | StrPath
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
     resolution: Resolution | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         makedirs(self.out_dir, exist_ok=True)
 
 
 @dataclass(init=False)
 class TrialQueue:
-    rich: queue.Queue
-    logging: queue.Queue
+    rich: queue.Queue[RichTableLogs | None]
+    logging: queue.Queue[logging.LogRecord]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.rich = multiprocessing.Manager().Queue(-1)
         self.logging = multiprocessing.Manager().Queue(-1)
 
@@ -228,7 +229,7 @@ class Trial:
         state.pop('_saga_env', None)
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, t.Any]) -> None:
         # Restore the pickled state
         self.__dict__.update(state)
         # Reinitialize transient attributes
@@ -255,7 +256,7 @@ class Trial:
                 wbw_env=self.wbw_env,
                 logger=self.logger_adapter,
             )
-        elif isinstance(self.config.dem, PathLike):
+        elif isinstance(self.config.dem, (str, PathLike)):
             return Raster(self.config.dem)
         return self.config.dem
 
@@ -277,7 +278,7 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_3x3_slope(self, dem: PathLike) -> SAGARaster:
+    def get_3x3_slope(self, dem: StrPath) -> SAGARaster:
         slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
             get_saga_raster_suffix(self.saga_env)
         )
@@ -289,7 +290,7 @@ class Trial:
         )
 
     def get_slope_gradient(
-        self, dem: PathLike
+        self, dem: StrPath
     ) -> SlopeGradientComputationOutput:
         hydro_analysis = HydrologicAnalysis(
             dem,
@@ -407,7 +408,7 @@ class Trial:
         level: int = logging.INFO,
         status: TrialStatus | None = None,
         exception: Exception | None = None,
-    ):
+    ) -> None:
         assert self.logger is not None
         context: TrialLoggingContext = {}
         if status is not None:
@@ -419,7 +420,7 @@ class Trial:
 
     def set_logger_multiprocess(
         self, q: TrialQueue, default_logs: RichTableLogs
-    ):
+    ) -> None:
         qh = QueueHandler(q.logging)
         logger = create_rich_logger(
             self.__class__.__name__, default_logs, q.rich
@@ -431,7 +432,7 @@ class Trial:
             self.logger, trial_name=self.config.name
         )
 
-    def set_logger(self):
+    def set_logger(self) -> None:
         if self.logger is None:
             logger = m_logger.getChild(self.__class__.__name__)
             self.logger = logger
@@ -469,7 +470,6 @@ class Trial:
             raise e
         else:
             self.logger_adapter.mark_finished()
-        finally:
             return ret
 
 
@@ -488,7 +488,7 @@ class TrialsExecutor:
     q: TrialQueue = field(init=False, repr=False)
     logger: InitVar[AnyLogger | None] = field(kw_only=True, default=None)
 
-    def __post_init__(self, logger: AnyLogger | None):
+    def __post_init__(self, logger: AnyLogger | None) -> None:
         self._logger = logger or m_logger.getChild(self.__class__.__name__)
         self.logs = self.get_rich_init_logs()
         self.q = TrialQueue()
@@ -513,7 +513,7 @@ class TrialsExecutor:
         self,
         live: Live,
         futures: c.Sequence[concurrent.futures.Future[TrialResult]],
-    ):
+    ) -> None:
         while any(f.running() for f in futures):
             live.update(make_table(self.logs), refresh=IS_NOTEBOOK)
             time.sleep(0.1)

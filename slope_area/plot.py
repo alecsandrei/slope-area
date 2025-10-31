@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
 from pathlib import Path
+import typing as t
 
 from matplotlib.axes import Axes
 import matplotlib.pyplot as plt
@@ -25,8 +26,8 @@ def slope_area_plot_func(
     ymin: float | None = None,
     ymax: float | None = None,
     ax: Axes | None = None,
-    **plot_kwargs,
-):
+    **plot_kwargs: t.Any,
+) -> None:
     if ax is not None:
         plt.sca(ax)
     area: pd.DataFrame = data[area_col]
