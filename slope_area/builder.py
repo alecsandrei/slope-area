@@ -214,10 +214,6 @@ class Trial:
     config: TrialConfig
     logger: logging.Logger | None = field(default=None, repr=False)
     logger_adapter: TrialLoggerAdapter = field(init=False, repr=False)
-    _wbw_env: WbEnvironment | None = field(init=False, default=None, repr=False)
-    _saga_env: PySAGA_cmd.SAGA | None = field(
-        init=False, default=None, repr=False
-    )
 
     # __gestate__ and __setstate__ make this object picklable
 
@@ -238,15 +234,11 @@ class Trial:
 
     @property
     def wbw_env(self) -> WbEnvironment:
-        if self._wbw_env is None:
-            self._wbw_env = get_wbw_env(self.logger_adapter)
-        return self._wbw_env
+        return get_wbw_env(self.logger_adapter)
 
     @property
     def saga_env(self) -> PySAGA_cmd.SAGA:
-        if self._saga_env is None:
-            self._saga_env = get_saga_env(self.logger_adapter)
-        return self._saga_env
+        return get_saga_env(self.logger_adapter)
 
     def get_dem(self) -> Raster:
         if isinstance(self.config.dem, DEMProvider):
