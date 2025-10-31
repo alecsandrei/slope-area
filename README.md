@@ -45,7 +45,7 @@ slope_area_plot(
     config=SlopeAreaPlotConfig(hue='slope_type'),
 )
 ```
-<img src="https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/00_minimal_example/slope_area.png" alt="drawing" width="600"/>
+<img src="https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/00_minimal_example/slope_area.png" alt="drawing" width="400"/>
 
 ### Run trials with multiprocessing
 
