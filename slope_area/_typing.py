@@ -17,8 +17,9 @@ type StrPath = str | PathLike[str]
 type PlotKind = t.Literal['line', 'scatter']
 type AnyLogger = logging.Logger | logging.LoggerAdapter[logging.Logger]
 type AnyDEM = DEMProvider | Raster | StrPath
-
 type Resolution = tuple[int, int] | tuple[float, float]
+type EPSG = int
+type AnyCRS = WKTProvider | EPSG
 
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
@@ -27,6 +28,11 @@ type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
 class TrialLoggingContext(t.TypedDict):
     trialStatus: t.NotRequired[TrialStatus]
     trialException: t.NotRequired[Exception]
+
+
+@t.runtime_checkable
+class WKTProvider(t.Protocol):
+    def to_wkt(self) -> str: ...
 
 
 @t.runtime_checkable

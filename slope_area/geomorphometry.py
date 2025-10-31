@@ -228,8 +228,8 @@ def compute_slope(
     )
     return tool.execute(
         verbose=False,
-        elevation=elevation,
-        slope=out_slope,
+        elevation=fspath(elevation),
+        slope=fspath(out_slope),
         unit_slope=2,  # Percent rise
         method=6,  # 9 parameter 2nd order polynom (Zevenbergen & Thorne 1987)
     ).rasters['slope']

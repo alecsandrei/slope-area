@@ -33,7 +33,7 @@ def main() -> None:
     # ---- Paths ----
     outlets_path = PROJ_ROOT / 'data' / 'raw' / 'outlets.shp'
 
-    out_dir = PROJ_ROOT / 'data' / 'processed' / '02_internal_example'
+    out_dir = PROJ_ROOT / 'data' / 'processed' / '__main__'
     out_dir_outlet_builder = out_dir / 'outlet_builder'
     out_dir_resolution_builder = out_dir / 'resolution_builder'
 
@@ -79,7 +79,7 @@ def main() -> None:
     generalized_dem = GeneralizedDEM(
         path=generalized_dem_path, out_dir=generalized_dem_out
     )
-    dem_source = DEMSource(dem_dir, tiles, generalized_dem)
+    dem_source = DEMSource(dem_dir, tiles, generalized_dem, crs=3844)
 
     # ---- Read outlets ----
     logger.info('Reading outlets at %s' % outlets_path)
@@ -108,7 +108,7 @@ def main() -> None:
         out_dir=builder_config.out_dir,
         outlet_snap_dist=builder_config.hydrologic_analysis_config.outlet_snap_distance,
     )
-    vrt = VRT.from_dem_tiles(dem_tiles, dem)
+    vrt = VRT.from_dem_tiles(dem_tiles, dem).define_projection(dem_source.crs)
 
     _ = ResolutionPlotBuilder(builder_config, vrt, outlet, resolutions).build()
 

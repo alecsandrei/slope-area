@@ -8,14 +8,17 @@ import logging
 from os import fspath, makedirs
 from pathlib import Path
 import typing as t
+import xml.etree.ElementTree as ET
 
 import geopandas as gpd
+import pyproj
 import rasterio as rio
 from rio_vrt import build_vrt
 import shapely
 from shapely.geometry.base import BaseGeometry
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 
+from slope_area._typing import AnyCRS, DEMProvider
 from slope_area.config import get_wbw_env
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
@@ -28,7 +31,7 @@ from slope_area.utils import redirect_warnings, timeit, write_whitebox
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
 
-    from slope_area._typing import AnyLogger, DEMProvider, StrPath
+    from slope_area._typing import AnyLogger, StrPath
 
 
 m_logger = create_logger(__name__)
@@ -39,11 +42,32 @@ class DEMSource:
     dem_dir: Path
     tiles: Path
     generalized_dem: GeneralizedDEM
+    crs: AnyCRS
 
 
 @dataclass(frozen=True, eq=True)
 class VRT(Raster):
     dem_tiles: DEMTiles
+
+    @t.override
+    def define_projection(self, crs: AnyCRS) -> t.Self:
+        if isinstance(crs, int):
+            crs = pyproj.CRS.from_epsg(crs)
+        crs_str = crs.to_wkt()
+
+        # Read and parse XML
+        tree = ET.parse(self.path)
+        root = tree.getroot()
+
+        # Find the SRS element and replace its text
+        srs_elem = root.find('SRS')
+        if srs_elem is None:
+            srs_elem = ET.SubElement(root, 'SRS')
+        srs_elem.text = crs_str
+
+        # Save back to file
+        tree.write(self.path, encoding='UTF-8')
+        return self
 
     @classmethod
     def from_dem_tiles(
@@ -256,7 +280,7 @@ class DEMTiles:
         makedirs(out_dir, exist_ok=True)
 
         # ---- Read data ----
-        wbw_outlet = Outlets([outlet], crs=outlet.crs).to_whitebox_vector()
+        wbw_outlet = Outlets([outlet]).to_whitebox_vector(dem_source.crs)
 
         # ---- Computing watershed ----
         wbw_outlet_snapped = wbw_env.snap_pour_points(
@@ -311,5 +335,7 @@ class DynamicVRT(DEMProvider):
             wbw_env=wbw_env,
             logger=logger,
         )
-
-        return VRT.from_dem_tiles(dem_tiles, out_dir / 'dem.vrt')
+        vrt = VRT.from_dem_tiles(dem_tiles, out_dir / 'dem.vrt')
+        if not vrt.crs.is_projected:
+            vrt = vrt.define_projection(self.dem_source.crs)
+        return vrt

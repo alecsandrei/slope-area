@@ -14,6 +14,7 @@ from pathlib import Path
 import queue
 import threading
 import time
+import traceback
 import typing as t
 
 from geopandas import gpd
@@ -107,9 +108,8 @@ class ResolutionPlotBuilder(Builder):
 
     @cached_property
     def trial_names(self) -> list[str]:
-        unit_name = self.outlet.crs.axis_info[0].unit_name
         return [
-            f'{resolution[0]} {unit_name}' for resolution in self.resolutions
+            f'Resolution {resolution[0]}' for resolution in self.resolutions
         ]
 
     def get_trials(self) -> Trials:
@@ -263,22 +263,13 @@ class Trial:
     def get_resampled_dem(self, raster: Raster) -> Raster:
         assert self.config.resolution is not None
         dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
-        crs = raster.crs
-        if not crs.is_projected:
-            self.log(
-                'CRS of %s is unprojected. Defaulting to the outlet CRS EPSG:%s'
-                % (Path(raster.path).name, self.config.outlet.crs.to_epsg()),
-                level=logging.WARNING,
-            )
-            crs = self.config.outlet.crs
         return raster.resample(
             out_file=dem_resampled_path,
             resolution=self.config.resolution,
-            crs=crs,
             logger=self.logger_adapter,
         )
 
-    def get_3x3_slope(self, dem: StrPath) -> SAGARaster:
+    def get_3x3_slope(self, dem: Raster) -> SAGARaster:
         slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
             get_saga_raster_suffix(self.saga_env)
         )
@@ -289,18 +280,14 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_slope_gradient(
-        self, dem: StrPath
-    ) -> SlopeGradientComputationOutput:
+    def get_slope_gradient(self, dem: Raster) -> SlopeGradientComputationOutput:
         hydro_analysis = HydrologicAnalysis(
             dem,
             out_dir=self.config.out_dir,
             wbw_env=self.wbw_env,
             logger=self.logger_adapter,
         )
-        wbw_outlet = Outlets(
-            [self.config.outlet], crs=self.config.outlet.crs
-        ).to_whitebox_vector()
+        wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
         return hydro_analysis.compute_slope_gradient(
             wbw_outlet, config=self.config.hydrologic_analysis_config
         )
@@ -444,8 +431,8 @@ class Trial:
         dem = self.get_dem()
         if self.config.resolution is not None:
             dem = self.get_resampled_dem(dem)
-        slope_grad = self.get_slope_gradient(dem.path)
-        slope_3x3 = self.get_3x3_slope(dem.path)
+        slope_grad = self.get_slope_gradient(dem)
+        slope_3x3 = self.get_3x3_slope(dem)
         # streams = self.get_streams_as_points(slope_grad)
         streams = self.get_main_stream_as_points(slope_grad)
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)
@@ -525,11 +512,20 @@ class TrialsExecutor:
         self._logger.info('Gathering results of TrialsExecutor')
         results = TrialResults()
         for i, future in enumerate(futures):
-            if (exc := future.exception()) is not None:
-                self._logger.debug(
-                    'Trial %s failed with error %s' % (self.trials[i], exc)
+            try:
+                result = future.result()
+            except Exception as e:
+                tb_str = ''.join(
+                    traceback.format_exception(type(e), e, e.__traceback__)
                 )
-            results.append(future.result())
+                self._logger.error(
+                    'Trial %r has failed with error\n%s'
+                    % (self.trials[i].config.name, tb_str)
+                )
+            else:
+                results.append(result)
+        if not results:
+            self._logger.error('All %i trials have errored.' % len(self.trials))
         return results
 
     def run(self) -> TrialResults:

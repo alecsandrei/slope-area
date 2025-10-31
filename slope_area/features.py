@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import UserList
 import collections.abc as c
 from dataclasses import dataclass
+from os import fspath
 from pathlib import Path
 import typing as t
 
@@ -21,6 +22,7 @@ from whitebox_workflows import (
 )
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
+from slope_area._typing import AnyCRS
 from slope_area.config import get_wbw_env
 from slope_area.logger import create_logger
 from slope_area.utils import resample
@@ -36,18 +38,29 @@ m_logger = create_logger(__name__)
 class Raster:
     path: StrPath
 
+    def __fspath__(self) -> str:
+        return fspath(self.path)
+
     @property
-    def crs(self) -> pyproj.CRS:
+    def crs(self) -> rio.CRS:
         with rio.open(self.path) as src:
-            ret = src.crs
-            assert isinstance(ret, pyproj.CRS)
-            return ret
+            return src.crs
+
+    def define_projection(self, crs: AnyCRS) -> t.Self:
+        if isinstance(crs, int):
+            crs = pyproj.CRS.from_epsg(crs)
+        with rio.open(self.path) as src:
+            meta = src.meta.copy()
+            meta.update(crs=crs)
+            with rio.open(self.path, 'w', **meta) as out_src:
+                out_src.write(src.read())
+        return self
 
     def resample(
         self,
         out_file: StrPath,
         resolution: Resolution,
-        crs: pyproj.CRS | None = None,
+        crs: AnyCRS | None = None,
         *,
         logger: AnyLogger = m_logger,
     ) -> Raster:
@@ -78,19 +91,16 @@ class Raster:
 class Outlet:
     name: str
     geom: shapely.Point
-    crs: pyproj.CRS
 
-    def __repr__(self) -> str:
-        return f'Outlet(geom={self.geom}, crs={self.crs.to_epsg()}, name={self.name})'
+    @classmethod
+    def from_xy(cls, x: float, y: float, *, name: str) -> t.Self:
+        return cls(name=name, geom=shapely.Point(x, y))
 
 
 @dataclass
 class Outlets(UserList[Outlet]):
-    def __init__(
-        self, data: c.Iterable[Outlet] | None = None, *, crs: pyproj.CRS
-    ):
+    def __init__(self, data: c.Iterable[Outlet] | None = None):
         super().__init__(data)
-        self.crs = crs
 
     @classmethod
     def from_gdf(
@@ -101,18 +111,18 @@ class Outlets(UserList[Outlet]):
         if not all(isinstance(geom, shapely.Point) for geom in gdf.geometry):
             raise TypeError('All geometries must be Points')
 
-        crs = pyproj.CRS.from_user_input(gdf.crs)
         outlets = [
             Outlet(
-                geom=row.geometry,
-                crs=crs,
                 name=(row[name_field] if name_field else str(i)),
+                geom=row.geometry,
             )
             for i, row in gdf.iterrows()
         ]
-        return cls(outlets, crs=crs)
+        return cls(outlets)
 
-    def to_whitebox_vector(self) -> WhiteboxVector:
+    def to_whitebox_vector(self, crs: AnyCRS) -> WhiteboxVector:
+        if isinstance(crs, int):
+            crs = pyproj.CRS.from_epsg(crs)
         vector = get_wbw_env().new_vector(
             VectorGeometryType.Point,
             [
@@ -123,7 +133,7 @@ class Outlets(UserList[Outlet]):
                     decimal_count=0,
                 )
             ],
-            self.crs.to_wkt(),
+            crs.to_wkt(),
         )
         for outlet in self.data:
             geometry = VectorGeometry.new_vector_geometry(
