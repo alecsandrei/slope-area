@@ -15,7 +15,6 @@ dependencies = [
   "matplotlib>=3.10.7",
   "numpy>=2.3.3",
   "pysaga-cmd>=1.2.6",
-  "python-dotenv",
   "rasterio>=1.4.3",
   "rich[jupyter]>=14.2.0",
   "rio-vrt>=0.3.1",
