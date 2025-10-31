@@ -1,25 +1,80 @@
 # slope-area
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
-
 Tool that can be used to generate slope-area plots and other analysis.
 
 ## 📚 Table of Contents
 
-1. [Installation](#installation)  
+1. [API Examples](#api-examples)
+   - [Minimal example](#minimal-example)  
+   - [Run trials with multiprocessing](#run-trials-with-multiprocessing)
+   - [Run trials with Builder objects](#run-trials-with-builder-objects)  
+2. [Installation](#installation)  
    - [Download SAGA GIS](#download-saga-gis)  
      - [Download SAGA GIS on Linux](#download-saga-gis-on-linux)  
      - [Download SAGA GIS on Windows](#download-saga-gis-on-windows)  
    - [Download uv](#download-uv)
-   - [Download package](#download-package)  
+   - [Download slope-area](#download-slope-area)  
    - [Activate environment](#activate-environment)  
      - [Activate environment on Linux](#activate-environment-on-linux)  
      - [Activate environment on Windows](#activate-environment-on-windows)  
    - [Run tests](#run-tests)  
-2. [Project Organization](#project-organization)  
-3. [License](#license)
+3. [Project Organization](#project-organization)  
+4. [License](#license)
+
+## API examples
+
+[Detailed notebooks here](https://github.com/alecsandrei/slope-area/tree/main/notebooks)
+
+### Minimal example
+
+```py
+outlet = Outlet.from_xy(711339, 533362, name='outlet')
+trial_config = TrialConfig(
+    outlet.name,
+    outlet,
+    dem=dem,
+    hydrologic_analysis_config=HydrologicAnalysisConfig(
+        streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
+    ),
+    out_dir=out_dir,
+)
+trial = Trial(trial_config).run()
+slope_area_plot(
+    data=trial.profiles,
+    out_fig=out_fig,
+    config=SlopeAreaPlotConfig(hue='slope_type'),
+)
+```
+
+![slope-area-plot-1](./data/processed/00_minimal_example/slope_area.png)
+
+### Run trials with multiprocessing
+
+```py
+Trials([trial_1, trial_2, trial_3]).run(max_workers=3)
+```
+
+### Run trials with Builder objects
+
+```py
+resolutions = [(res, res) for res in range(5, 15)]
+builder_config = BuilderConfig(
+    hydrologic_analysis_config=HydrologicAnalysisConfig(
+        streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
+    ),
+    out_dir=out_dir,
+    out_fig=out_fig,
+    plot_config=SlopeAreaPlotConfig(hue='slope_type'),
+    max_workers=max_workers,
+)
+results = ResolutionPlotBuilder(
+    builder_config, dem, outlet, resolutions
+).build()
+```
+
+![console](./assets/console.webp)
+
+![slope-area-plot-2](./data/processed/02_internal_example/resolution_builder/slope_area.png)
 
 ## Installation
 
@@ -37,9 +92,9 @@ Install the latest version on [SourceForge](https://sourceforge.net/projects/sag
 
 ### Download uv
 
-Details: https://docs.astral.sh/uv/getting-started/installation/
+Details: [https://docs.astral.sh/uv/getting-started/installation/](https://docs.astral.sh/uv/getting-started/installation/)
 
-### Download package
+### Download slope-area
 
 ```sh
 git clone https://github.com/alecsandrei/slope-area
@@ -67,37 +122,20 @@ source .venv/bin/activate
 pytest tests
 ```
 
-More examples [here](https://github.com/alecsandrei/slope-area/tree/main/notebooks) and [here](https://github.com/alecsandrei/slope-area/blob/main/slope_area/__main__.py).
-
 ## Project Organization
 
 ```text
-├── LICENSE            <- Open-source license if one is chosen
-├── Makefile           <- Makefile
-├── README.md          <- The top-level README for developers using this project.
+├── LICENSE            <- Open-source license.
+├── README.md          <- The top-level README.
 ├── data
-│   ├── external       <- Data from third party sources.
-│   ├── interim        <- Intermediate data that has been transformed.
-│   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
-│
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details.
+│   │── raw            <- The original, immutable data dump.
+│   └── processed      <- Output files from computation, used in notebook examples.
 ├── logging
 │   └── config.json    <- Python logging module configurations.
+├── notebooks          <- Jupyter notebooks. Naming convention is `01_workflow_name.ipynb`.
 │
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description,
-│                         e.g. `1.0-jqp-initial-data-exploration`.
-│
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         slope_area and configuration for tools like black
-│
-├── references         <- Data dictionaries, manuals, and all other explanatory materials.
-│
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
-│
-└── slope_area   <- Source code for use in this project.
+├── pyproject.toml     <- Python project configuration file.
+└── slope_area         <- Source code for use in this project.
 ```
 
 ## License
