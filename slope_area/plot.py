@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
-from pathlib import Path
 import typing as t
 
 from matplotlib.axes import Axes
@@ -12,8 +11,10 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from slope_area._typing import PlotKind
 from slope_area.logger import create_logger
+
+if t.TYPE_CHECKING:
+    from slope_area._typing import PlotKind, StrPath
 
 m_logger = create_logger(__name__)
 
@@ -158,8 +159,8 @@ def set_plot_options_facetgrid(
 
 def slope_area_grid(
     data: pd.DataFrame,
-    out_fig: Path,
-    config: SlopeAreaPlotConfig | None = None,
+    config: SlopeAreaPlotConfig,
+    out_fig: StrPath | None = None,
 ) -> sns.FacetGrid:
     if config is None:
         config = SlopeAreaPlotConfig()
@@ -189,15 +190,16 @@ def slope_area_grid(
         ymax=slope.max(),
     ).set(xscale='log', yscale='log')
     set_plot_options_facetgrid(config, g)
-    plt.savefig(out_fig, dpi=300)
+    if out_fig is not None:
+        plt.savefig(out_fig, dpi=300, bbox_inches='tight')
     m_logger.info('Saved slope area plot at %s' % out_fig)
     return g
 
 
 def slope_area_plot_single(
     data: pd.DataFrame,
-    out_fig: Path,
     config: SlopeAreaPlotConfig,
+    out_fig: StrPath | None = None,
     ax: Axes | None = None,
 ) -> Axes:
     if ax is None:
@@ -209,23 +211,24 @@ def slope_area_plot_single(
     else:
         func(data=data)
     set_plot_options(config, ax)
-    plt.savefig(out_fig, dpi=300)
+    if out_fig is not None:
+        plt.savefig(out_fig, dpi=300, bbox_inches='tight')
     m_logger.info('Saved slope area plot at %s' % out_fig)
     return ax
 
 
 def slope_area_plot(
     data: pd.DataFrame,
-    out_fig: Path,
     config: SlopeAreaPlotConfig | None = None,
+    out_fig: StrPath | None = None,
     ax: Axes | None = None,
 ) -> sns.FacetGrid | Axes:
     if config is None:
         config = SlopeAreaPlotConfig()
     if config.col is None:
-        ret = slope_area_plot_single(data, out_fig, config, ax=ax)
+        ret = slope_area_plot_single(data, config, out_fig, ax=ax)
     else:
-        ret = slope_area_grid(data, out_fig, config)
+        ret = slope_area_grid(data, config, out_fig)
     if config.show:
         plt.show()
     return ret
