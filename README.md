@@ -79,6 +79,9 @@ results = ResolutionPlotBuilder(
 
 ### Download SAGA GIS
 
+Tip: define the saga_cmd environment variable to point to the saga_cmd file.
+This may not be needed on Linux.
+
 #### Download SAGA GIS on Linux
 
 ```sh
