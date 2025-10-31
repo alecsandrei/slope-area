@@ -41,6 +41,7 @@ build-backend = "flit_core.buildapi"
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+strict = true
 
 [tool.ruff]
 line-length = 80
@@ -66,3 +67,4 @@ quote-style = "single"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
