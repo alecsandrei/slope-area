@@ -45,8 +45,7 @@ slope_area_plot(
     config=SlopeAreaPlotConfig(hue='slope_type'),
 )
 ```
-
-![slope-area-plot-1](./data/processed/00_minimal_example/slope_area.png)
+<img src="https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/00_minimal_example/slope_area.png" alt="drawing" width="600"/>
 
 ### Run trials with multiprocessing
 
@@ -72,9 +71,9 @@ results = ResolutionPlotBuilder(
 ).build()
 ```
 
-![console](./assets/console.webp)
+![console](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/assets/console.webp)
 
-![slope-area-plot-2](./data/processed/02_internal_example/resolution_builder/slope_area.png)
+![slope-area-plot-2](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/02_internal_example/resolution_builder/slope_area.png)
 
 ## Installation
 
