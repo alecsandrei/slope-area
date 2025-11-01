@@ -18,17 +18,17 @@ m_logger = create_logger(__name__)
 
 
 @cache
-def get_wbw_env(logger: AnyLogger = m_logger) -> WbEnvironment:
+def get_wbw_env() -> WbEnvironment:
     env: WbEnvironment = wbw.WbEnvironment()
     env.verbose = False
-    logger.info('Initialized Whitebox Environment')
+    m_logger.info('Initialized Whitebox Environment')
     return env
 
 
 @cache
-def get_saga_env(logger: AnyLogger = m_logger) -> PySAGA_cmd.SAGA:
+def get_saga_env() -> PySAGA_cmd.SAGA:
     env = PySAGA_cmd.SAGA(os.environ.get('saga_cmd', 'saga_cmd'))
-    logger.info('Initialized SAGAGIS Environment')
+    m_logger.info('Initialized SAGAGIS Environment')
     return env
 
 

@@ -80,16 +80,49 @@ def resample[T: StrPath](
         return dest
 
 
+def mask_raster(
+    raster: WhiteboxRaster | StrPath,
+    mask: WhiteboxRaster | StrPath,
+    *,
+    logger: AnyLogger = m_logger,
+) -> WhiteboxRaster:
+    raster = read_whitebox_raster(raster, logger=logger)
+    mask = read_whitebox_raster(mask, logger=logger)
+    return mask.con(
+        'value == 1', true_raster_or_float=raster, false_raster_or_float=mask
+    )
+
+
+def read_whitebox_raster(
+    raster: WhiteboxRaster | StrPath, *, logger: AnyLogger = m_logger
+) -> WhiteboxRaster:
+    if not isinstance(raster, WhiteboxRaster):
+        raster_path = os.fspath(raster)
+        logger.info('Reading raster %s' % Path(raster_path).name)
+        raster = get_wbw_env().read_raster(raster_path)
+    return raster
+
+
+def read_whitebox_vector(
+    vector: WhiteboxVector | StrPath, *, logger: AnyLogger = m_logger
+) -> WhiteboxVector:
+    if not isinstance(vector, WhiteboxVector):
+        vector_path = os.fspath(vector)
+        logger.info('Reading vector %s' % Path(vector_path).name)
+        vector = get_wbw_env().read_vector(vector_path)
+    return vector
+
+
 def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     output: T,
-    out_file: Path,
+    out_file: StrPath,
     *,
     logger: AnyLogger | None = None,
     overwrite: bool = False,
     wbw_env: WbEnvironment | None = None,
 ) -> T:
     if wbw_env is None:
-        wbw_env = get_wbw_env(logger)
+        wbw_env = get_wbw_env()
     out_file_str = os.fspath(out_file)
     if logger is None:
         logger = create_logger(__name__)
@@ -102,7 +135,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
         logger.debug(
             'Not saving %s as it is open in read-only' % output.file_name
         )
-    elif out_file.exists() and not overwrite:
+    elif Path(out_file).exists() and not overwrite:
         logger.debug('Not saving %s as overwrite is disabled' % out_file_str)
     else:
         logger.info(

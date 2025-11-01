@@ -23,7 +23,7 @@ from slope_area.config import get_wbw_env
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
     FlowAccumulationComputationOutput,
-    HydrologicAnalysis,
+    compute_flow,
 )
 from slope_area.logger import create_logger
 from slope_area.utils import redirect_warnings, timeit, write_whitebox
@@ -104,21 +104,17 @@ class GeneralizedDEM(Raster):
     def compute_flow(
         self, rasters: tuple[Path, Path, Path]
     ) -> FlowAccumulationComputationOutput:
-        hydro_analysis = HydrologicAnalysis(self.path, out_dir=self.out_dir)
-        output = hydro_analysis.compute_flow()
-        outputs = (
-            output.dem_preproc,
-            output.d8_pointer,
-            output.flow_accumulation,
-        )
+        logger = m_logger.getChild(self.__class__.__name__)
+        flow = compute_flow(self.path, logger=logger)
+        outputs = (flow.dem_preproc, flow.d8_pointer, flow.flow_accumulation)
         write_whitebox_func = partial(
             write_whitebox,
             overwrite=True,
-            logger=m_logger.getChild(self.__class__.__name__),
+            logger=logger,
         )
         for wbw_raster, out_file in zip(outputs, rasters):
             write_whitebox_func(wbw_raster, out_file)
-        return output
+        return flow
 
     def read_flow_output(
         self, rasters: tuple[Path, Path, Path]
@@ -274,7 +270,7 @@ class DEMTiles:
     ) -> t.Self:
         logger = logger or m_logger.getChild(cls.__name__)
         if wbw_env is None:
-            wbw_env = get_wbw_env(logger)
+            wbw_env = get_wbw_env()
         logger.info('Infering DEM tiles based on the outlet')
         out_dir = Path(out_dir)
         makedirs(out_dir, exist_ok=True)
@@ -330,7 +326,7 @@ class DynamicVRT(DEMProvider):
             outlet=outlet,
             out_dir=Path(self.out_parent) / outlet.name,
             outlet_snap_dist=self.outlet_snap_distance,
-            wbw_env=get_wbw_env(logger),
+            wbw_env=get_wbw_env(),
             logger=logger,
         )
         vrt = VRT.from_dem_tiles(dem_tiles, out_dir / 'dem.vrt')

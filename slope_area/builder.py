@@ -22,7 +22,7 @@ import pandas as pd
 import PySAGA_cmd
 from PySAGA_cmd import Raster as SAGARaster
 from rich.live import Live
-from whitebox_workflows import WbEnvironment
+from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
 from slope_area._typing import AnyLogger, DEMProvider
@@ -41,10 +41,12 @@ from slope_area.console import (
 from slope_area.enums import TrialStatus
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
-    HydrologicAnalysis,
     HydrologicAnalysisConfig,
     SlopeGradientComputationOutput,
     compute_slope,
+    compute_slope_gradient,
+    mask_dem_with_watershed,
+    preprocess_dem,
 )
 from slope_area.logger import (
     TrialLoggerAdapter,
@@ -55,6 +57,8 @@ from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
 from slope_area.utils import redirect_warnings, write_whitebox
 
 if t.TYPE_CHECKING:
+    from whitebox_workflows.whitebox_workflows import WbEnvironment
+
     from slope_area._typing import (
         AnyDEM,
         Resolution,
@@ -215,30 +219,13 @@ class Trial:
     logger: logging.Logger | None = field(default=None, repr=False)
     logger_adapter: TrialLoggerAdapter = field(init=False, repr=False)
 
-    # __gestate__ and __setstate__ make this object picklable
-
-    def __getstate__(self) -> dict[str, t.Any]:
-        # Return a shallow copy of __dict__ minus unpickleable fields
-        state = self.__dict__.copy()
-        # Remove unpicklable or environment-specific attributes
-        state.pop('_wbw_env', None)
-        state.pop('_saga_env', None)
-        return state
-
-    def __setstate__(self, state: dict[str, t.Any]) -> None:
-        # Restore the pickled state
-        self.__dict__.update(state)
-        # Reinitialize transient attributes
-        self._wbw_env = None
-        self._saga_env = None
-
     @property
     def wbw_env(self) -> WbEnvironment:
-        return get_wbw_env(self.logger_adapter)
+        return get_wbw_env()
 
     @property
     def saga_env(self) -> PySAGA_cmd.SAGA:
-        return get_saga_env(self.logger_adapter)
+        return get_saga_env()
 
     def get_dem(self) -> Raster:
         if isinstance(self.config.dem, DEMProvider):
@@ -251,6 +238,23 @@ class Trial:
             return Raster(self.config.dem)
         return self.config.dem
 
+    def get_masked_dem(self, dem: Raster) -> WhiteboxRaster:
+        wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
+        dem_preproc = preprocess_dem(dem, logger=self.logger_adapter)
+        masked_dem = mask_dem_with_watershed(
+            dem_preproc,
+            outlet=wbw_outlet,
+            outlet_snap_distance=self.config.hydrologic_analysis_config.outlet_snap_distance,
+            logger=self.logger_adapter,
+        )
+        write_whitebox(
+            masked_dem,
+            self.config.out_dir / 'dem_preproc_mask.tif',
+            logger=self.logger_adapter,
+            overwrite=True,
+        )
+        return masked_dem
+
     def get_resampled_dem(self, raster: Raster) -> Raster:
         assert self.config.resolution is not None
         dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
@@ -260,27 +264,19 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_3x3_slope(self, dem: Raster) -> SAGARaster:
+    def get_3x3_slope(self, dem: StrPath) -> SAGARaster:
         slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
             get_saga_raster_suffix(self.saga_env)
         )
-        return compute_slope(
-            dem,
-            slope_3x3_path,
-            saga_env=self.saga_env,
-            logger=self.logger_adapter,
-        )
+        return compute_slope(dem, slope_3x3_path, logger=self.logger_adapter)
 
-    def get_slope_gradient(self, dem: Raster) -> SlopeGradientComputationOutput:
-        hydro_analysis = HydrologicAnalysis(
-            dem,
-            out_dir=self.config.out_dir,
-            wbw_env=self.wbw_env,
+    def get_slope_gradient(
+        self, dem_preproc: WhiteboxRaster
+    ) -> SlopeGradientComputationOutput:
+        return compute_slope_gradient(
+            dem_preproc,
+            self.config.hydrologic_analysis_config,
             logger=self.logger_adapter,
-        )
-        wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
-        return hydro_analysis.compute_slope_gradient(
-            wbw_outlet, config=self.config.hydrologic_analysis_config
         )
 
     def get_main_stream_as_points(
@@ -303,7 +299,7 @@ class Trial:
     ) -> WhiteboxVector:
         stream_profiles_path = self.config.out_dir / 'streams.shp'
         stream_profiles = self.wbw_env.raster_to_vector_points(
-            slope_grad.streams
+            slope_grad.streams.streams
         )
         return write_whitebox(
             stream_profiles,
@@ -340,7 +336,7 @@ class Trial:
         rasters = {
             'slope': self.wbw_env.read_raster(fspath(slope_3x3.path)),
             'slope_grad': slope_grad.slope_grad,
-            'flowacc': slope_grad.flow.flow_accumulation,
+            'flowacc': slope_grad.streams.flow.flow_accumulation,
         }
         output = self.wbw_env.extract_raster_values_at_points(
             rasters=list(rasters.values()),
@@ -422,8 +418,9 @@ class Trial:
         dem = self.get_dem()
         if self.config.resolution is not None:
             dem = self.get_resampled_dem(dem)
-        slope_grad = self.get_slope_gradient(dem)
-        slope_3x3 = self.get_3x3_slope(dem)
+        masked_dem = self.get_masked_dem(dem)
+        slope_grad = self.get_slope_gradient(masked_dem)
+        slope_3x3 = self.get_3x3_slope(masked_dem.file_name)
         # streams = self.get_streams_as_points(slope_grad)
         streams = self.get_main_stream_as_points(slope_grad)
         profiles = self.get_profiles(slope_3x3, slope_grad, streams)

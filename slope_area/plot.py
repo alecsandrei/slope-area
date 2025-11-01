@@ -193,6 +193,8 @@ def slope_area_grid(
     if out_fig is not None:
         plt.savefig(out_fig, dpi=300, bbox_inches='tight')
     m_logger.info('Saved slope area plot at %s' % out_fig)
+    if config.show:
+        plt.show()
     return g
 
 
@@ -214,6 +216,8 @@ def slope_area_plot_single(
     if out_fig is not None:
         plt.savefig(out_fig, dpi=300, bbox_inches='tight')
     m_logger.info('Saved slope area plot at %s' % out_fig)
+    if config.show:
+        plt.show()
     return ax
 
 
@@ -229,6 +233,4 @@ def slope_area_plot(
         ret = slope_area_plot_single(data, config, out_fig, ax=ax)
     else:
         ret = slope_area_grid(data, config, out_fig)
-    if config.show:
-        plt.show()
     return ret
