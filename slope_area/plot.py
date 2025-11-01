@@ -131,7 +131,6 @@ def set_plot_options(config: SlopeAreaPlotConfig, ax: Axes) -> None:
 
     if config.hue is not None and config.legend:
         ax.legend(fontsize=config.legend_font_size)
-
     plt.tight_layout(pad=2)
 
 
@@ -151,10 +150,10 @@ def set_plot_options_facetgrid(
     facet_grid.set(xscale='log', yscale='log')
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
-    if config.hue is not None and config.legend:
-        facet_grid.axes.flat[0].legend(fontsize=config.legend_font_size)
-
     plt.tight_layout(pad=2)
+    if config.hue is not None and config.legend:
+        facet_grid.add_legend(fontsize=config.legend_font_size, title='')
+        # facet_grid.axes.flat[0].legend(fontsize=config.legend_font_size)
 
 
 def slope_area_grid(
@@ -179,6 +178,7 @@ def slope_area_grid(
         height=config.height,
         aspect=config.aspect,
         col_wrap=col_wrap,
+        legend_out=config.legend,
     )
     slope = data['slope']
     g = g.map_dataframe(

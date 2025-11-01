@@ -6,10 +6,10 @@ from os import fspath
 from pathlib import Path
 import typing as t
 
-from PySAGA_cmd import Raster as SAGARaster
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
+from slope_area._typing import SlopeProvider
 from slope_area.config import get_saga_env, get_wbw_env
 from slope_area.logger import create_logger
 from slope_area.utils import (
@@ -18,12 +18,36 @@ from slope_area.utils import (
     read_whitebox_vector,
     suppress_stdout_stderr,
     timeit,
+    write_whitebox,
 )
 
 if t.TYPE_CHECKING:
     from slope_area._typing import AnyLogger, StrPath
 
 m_logger = create_logger(__name__)
+
+
+class DefaultSlopeProviders:
+    @dataclass
+    class Slope3x3(SlopeProvider):
+        def get_slope(self, dem: StrPath, out_file: StrPath) -> Path:
+            return compute_3x3_slope(dem, out_file, method=6)
+
+    @dataclass
+    class StreamSlopeContinuous(SlopeProvider):
+        d8_pointer: WhiteboxRaster | StrPath
+        streams: WhiteboxRaster | StrPath
+        streams_flow_accumulation_threshold: float
+
+        def get_slope(self, dem: StrPath, out_file: StrPath) -> Path:
+            slope_grad = compute_slope_gradient(
+                self.d8_pointer,
+                self.streams,
+                dem,
+                self.streams_flow_accumulation_threshold,
+            )
+            write_whitebox(slope_grad, out_file, overwrite=True)
+            return Path(out_file)
 
 
 @dataclass(frozen=True)
@@ -48,13 +72,6 @@ class WatershedComputationOutput(ComputationOutput):
 class StreamsComputationOutput(ComputationOutput):
     flow: FlowAccumulationComputationOutput
     streams: WhiteboxRaster
-
-
-@dataclass(frozen=True)
-class SlopeGradientComputationOutput(ComputationOutput):
-    streams: StreamsComputationOutput
-    main_stream: WhiteboxRaster
-    slope_grad: WhiteboxRaster
 
 
 @dataclass(frozen=True)
@@ -142,6 +159,7 @@ def mask_dem_with_watershed(
 def compute_streams(
     dem_preproc: WhiteboxRaster | StrPath,
     flow_accumulation_threshold: float,
+    main_stream: bool = True,
     *,
     logger: AnyLogger = m_logger,
 ) -> StreamsComputationOutput:
@@ -151,61 +169,63 @@ def compute_streams(
         flow_watershed.flow_accumulation,
         flow_accumulation_threshold,
     )
+    if main_stream:
+        streams = wbw_env.find_main_stem(flow_watershed.d8_pointer, streams)
     return StreamsComputationOutput(flow=flow_watershed, streams=streams)
 
 
 @timeit(m_logger, logging.INFO)
 def compute_slope_gradient(
+    d8_pointer: WhiteboxRaster | StrPath,
+    streams: WhiteboxRaster | StrPath,
     dem_preproc: WhiteboxRaster | StrPath,
-    config: HydrologicAnalysisConfig,
+    streams_flow_accumulation_threshold: float,
     *,
     logger: AnyLogger = m_logger,
-) -> SlopeGradientComputationOutput:
+) -> WhiteboxRaster:
     wbw_env = get_wbw_env()
+    d8_pointer = read_whitebox_raster(d8_pointer, logger=logger)
+    streams = read_whitebox_raster(streams, logger=logger)
     dem_preproc = read_whitebox_raster(dem_preproc, logger=logger)
 
     # ---- Computing the slope gradient for the masked DEM ----
     logger.info(
         'Computing the slope gradient for the main stream in the watershed'
     )
-    streams_output = compute_streams(
-        dem_preproc,
-        config.streams_flow_accumulation_threshold,
-        logger=logger,
-    )
-    main_stream = wbw_env.find_main_stem(
-        streams_output.flow.d8_pointer, streams_output.streams
-    )
     slope_gradient = degree_to_percent(
         wbw_env.stream_slope_continuous(
-            streams_output.flow.d8_pointer, main_stream, dem_preproc
+            d8_pointer,
+            streams,
+            dem_preproc,
         )
     )
-    slope_gradient_output = SlopeGradientComputationOutput(
-        streams_output, main_stream, slope_gradient
-    )
-    return slope_gradient_output
+    return slope_gradient
 
 
 @timeit(m_logger, logging.INFO)
-def compute_slope(
+def compute_3x3_slope(
     elevation: StrPath,
     out_slope: StrPath,
+    method: int = 6,  # 9 parameter 2nd order polynom (Zevenbergen & Thorne 1987)
     *,
     logger: AnyLogger = m_logger,
-) -> SAGARaster:
+) -> Path:
     saga_env = get_saga_env()
     tool = saga_env / 'ta_morphometry' / 'Slope, Aspect, Curvature'
     logger.info(
         'Computing slope for elevation raster %s' % Path(elevation).name
     )
-    return tool.execute(
-        verbose=False,
-        elevation=fspath(elevation),
-        slope=fspath(out_slope),
-        unit_slope=2,  # Percent rise
-        method=6,  # 9 parameter 2nd order polynom (Zevenbergen & Thorne 1987)
-    ).rasters['slope']
+    return Path(
+        tool.execute(
+            verbose=False,
+            elevation=fspath(elevation),
+            slope=fspath(out_slope),
+            unit_slope=2,  # Percent rise
+            method=method,
+        )
+        .rasters['slope']
+        .path
+    )
 
 
 def degree_to_percent(raster: WhiteboxRaster) -> WhiteboxRaster:

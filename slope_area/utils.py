@@ -146,17 +146,6 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     return output
 
 
-def extract_class_name_from_args(args: c.Sequence[t.Any]) -> str | None:
-    cls_name = None
-    if args:
-        instance = args[0]
-        if hasattr(instance, '__class__'):
-            cls_name = instance.__class__.__qualname__
-            if cls_name == 'type':
-                cls_name = instance.__qualname__
-    return cls_name
-
-
 P = t.ParamSpec('P')
 R = t.TypeVar('R')
 
@@ -170,11 +159,7 @@ def timeit(
             start = time.perf_counter()
             result = func(*args, **kwargs)
             duration = time.perf_counter() - start
-            class_name = extract_class_name_from_args(args)
-            class_dot_func = (
-                f'{class_name}.{func.__name__}' if class_name else func.__name__
-            )
-            message = '%s executed in %.6f seconds' % (class_dot_func, duration)
+            message = '%s executed in %.6f seconds' % (func.__name__, duration)
             if logger:
                 logger.log(level, message)
             else:

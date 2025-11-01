@@ -21,11 +21,17 @@ type AnyCRS = WKTProvider | EPSG
 
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
+type SlopeProviders = c.Mapping[str, SlopeProvider]
 
 
 class TrialLoggingContext(t.TypedDict):
     trialStatus: t.NotRequired[TrialStatus]
     trialException: t.NotRequired[Exception]
+
+
+@t.runtime_checkable
+class SlopeProvider(t.Protocol):
+    def get_slope(self, dem: StrPath, out_file: StrPath) -> StrPath: ...
 
 
 @t.runtime_checkable

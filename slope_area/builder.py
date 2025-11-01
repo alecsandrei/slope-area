@@ -9,7 +9,7 @@ from functools import cached_property
 import logging
 from logging.handlers import QueueHandler
 import multiprocessing
-from os import PathLike, fspath, makedirs
+from os import PathLike, makedirs
 from pathlib import Path
 import queue
 import threading
@@ -20,16 +20,18 @@ import typing as t
 from geopandas import gpd
 import pandas as pd
 import PySAGA_cmd
-from PySAGA_cmd import Raster as SAGARaster
 from rich.live import Live
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import AnyLogger, DEMProvider
+from slope_area._typing import (
+    AnyLogger,
+    DEMProvider,
+    SlopeProviders,
+)
 from slope_area.config import (
     IS_NOTEBOOK,
     get_saga_env,
-    get_saga_raster_suffix,
     get_wbw_env,
 )
 from slope_area.console import (
@@ -41,10 +43,10 @@ from slope_area.console import (
 from slope_area.enums import TrialStatus
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
+    DefaultSlopeProviders,
     HydrologicAnalysisConfig,
-    SlopeGradientComputationOutput,
-    compute_slope,
-    compute_slope_gradient,
+    StreamsComputationOutput,
+    compute_streams,
     mask_dem_with_watershed,
     preprocess_dem,
 )
@@ -54,7 +56,11 @@ from slope_area.logger import (
     turn_off_handlers,
 )
 from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
-from slope_area.utils import redirect_warnings, write_whitebox
+from slope_area.utils import (
+    read_whitebox_raster,
+    redirect_warnings,
+    write_whitebox,
+)
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
@@ -76,6 +82,7 @@ class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: StrPath
     out_fig: StrPath
+    slope_providers: SlopeProviders | None = None
     plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
 
@@ -127,6 +134,7 @@ class ResolutionPlotBuilder(Builder):
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                         dem=self.dem,
                         out_dir=Path(self.config.out_dir) / trial_name,
+                        slope_providers=self.config.slope_providers,
                     ),
                 )
                 for trial_name, resolution in zip(
@@ -170,6 +178,7 @@ class OutletPlotBuilder(Builder):
                         dem=self.dem,
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                         out_dir=Path(self.config.out_dir) / trial_name,
+                        slope_providers=self.config.slope_providers,
                     ),
                 )
                 for trial_name, outlet in zip(self.trial_names, self.outlets)
@@ -197,6 +206,7 @@ class TrialConfig:
     dem: DEMProvider | Raster | StrPath
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
+    slope_providers: SlopeProviders | None = None
     resolution: Resolution | None = None
 
     def __post_init__(self) -> None:
@@ -216,8 +226,11 @@ class TrialQueue:
 @dataclass
 class Trial:
     config: TrialConfig
-    logger: logging.Logger | None = field(default=None, repr=False)
+    logger: logging.Logger = field(init=False, repr=False)
     logger_adapter: TrialLoggerAdapter = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.set_logger()
 
     @property
     def wbw_env(self) -> WbEnvironment:
@@ -226,6 +239,27 @@ class Trial:
     @property
     def saga_env(self) -> PySAGA_cmd.SAGA:
         return get_saga_env()
+
+    def set_logger_multiprocess(
+        self, q: TrialQueue, default_logs: RichTableLogs
+    ) -> None:
+        qh = QueueHandler(q.logging)
+        logger = create_rich_logger(
+            self.__class__.__name__, default_logs, q.rich
+        )
+        logger.addHandler(qh)
+        logger.setLevel(logging.DEBUG)
+        self.logger = logger
+        self.logger_adapter = TrialLoggerAdapter(
+            self.logger, trial_name=self.config.name
+        )
+
+    def set_logger(self) -> None:
+        logger = m_logger.getChild(self.__class__.__name__)
+        self.logger = logger
+        self.logger_adapter = TrialLoggerAdapter(
+            self.logger, trial_name=self.config.name
+        )
 
     def get_dem(self) -> Raster:
         if isinstance(self.config.dem, DEMProvider):
@@ -238,7 +272,7 @@ class Trial:
             return Raster(self.config.dem)
         return self.config.dem
 
-    def get_masked_dem(self, dem: Raster) -> WhiteboxRaster:
+    def get_masked_dem_preproc(self, dem: Raster) -> WhiteboxRaster:
         wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
         dem_preproc = preprocess_dem(dem, logger=self.logger_adapter)
         masked_dem = mask_dem_with_watershed(
@@ -249,7 +283,7 @@ class Trial:
         )
         write_whitebox(
             masked_dem,
-            self.config.out_dir / 'dem_preproc_mask.tif',
+            out_file=self.config.out_dir / 'dem_preproc_mask.tif',
             logger=self.logger_adapter,
             overwrite=True,
         )
@@ -264,43 +298,9 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_3x3_slope(self, dem: StrPath) -> SAGARaster:
-        slope_3x3_path = (self.config.out_dir / 'slope').with_suffix(
-            get_saga_raster_suffix(self.saga_env)
-        )
-        return compute_slope(dem, slope_3x3_path, logger=self.logger_adapter)
-
-    def get_slope_gradient(
-        self, dem_preproc: WhiteboxRaster
-    ) -> SlopeGradientComputationOutput:
-        return compute_slope_gradient(
-            dem_preproc,
-            self.config.hydrologic_analysis_config,
-            logger=self.logger_adapter,
-        )
-
-    def get_main_stream_as_points(
-        self, slope_grad: SlopeGradientComputationOutput
-    ) -> WhiteboxVector:
-        main_stream_path = self.config.out_dir / 'main_stream.shp'
-        main_stream_profiles = self.wbw_env.raster_to_vector_points(
-            slope_grad.main_stream
-        )
-        return write_whitebox(
-            main_stream_profiles,
-            main_stream_path,
-            overwrite=True,
-            wbw_env=self.wbw_env,
-            logger=self.logger_adapter,
-        )
-
-    def get_streams_as_points(
-        self, slope_grad: SlopeGradientComputationOutput
-    ) -> WhiteboxVector:
+    def get_streams_as_points(self, streams: WhiteboxRaster) -> WhiteboxVector:
         stream_profiles_path = self.config.out_dir / 'streams.shp'
-        stream_profiles = self.wbw_env.raster_to_vector_points(
-            slope_grad.streams.streams
-        )
+        stream_profiles = self.wbw_env.raster_to_vector_points(streams)
         return write_whitebox(
             stream_profiles,
             stream_profiles_path,
@@ -320,24 +320,28 @@ class Trial:
         ):
             gpd.read_file(profiles).rename(
                 columns={
-                    f'VALUE{i}': raster_name
+                    f'VALUE{i}': raster_name[:10]  # shp only allows 10 chars
                     for i, raster_name in enumerate(raster_names, start=1)
                 }
             ).to_file(profiles)
 
     def get_profiles(
         self,
-        slope_3x3: SAGARaster,
-        slope_grad: SlopeGradientComputationOutput,
+        slopes: dict[str, StrPath],
+        flow_acc: WhiteboxRaster,
         streams: WhiteboxVector,
     ) -> Path:
         self.log('Generating profiles from stream network')
+        if 'area' in slopes:
+            raise ValueError(
+                '"area" is a reserved key and cannot be a slope provider'
+            )
         profiles_path = self.config.out_dir / 'profiles.shp'
         rasters = {
-            'slope': self.wbw_env.read_raster(fspath(slope_3x3.path)),
-            'slope_grad': slope_grad.slope_grad,
-            'flowacc': slope_grad.streams.flow.flow_accumulation,
+            slope_name: read_whitebox_raster(raster, logger=self.logger_adapter)
+            for slope_name, raster in slopes.items()
         }
+        rasters['area'] = flow_acc
         output = self.wbw_env.extract_raster_values_at_points(
             rasters=list(rasters.values()),
             points=streams,
@@ -346,27 +350,23 @@ class Trial:
             output,
             profiles_path,
             overwrite=True,
-            wbw_env=self.wbw_env,
             logger=self.logger_adapter,
         )
 
         self.rename_profiles_fields(profiles_path, rasters)
         return profiles_path
 
-    def process_profiles(self, profiles: Path) -> gpd.GeoDataFrame:
+    def process_profiles(
+        self, profiles: Path, slope_names: c.Sequence[str]
+    ) -> gpd.GeoDataFrame:
         self.logger_adapter.info('Reading profiles %s' % profiles)
         gdf = gpd.read_file(profiles)
-        slope_cols = ['Slope 3x3', 'StreamSlopeContinuous']
         gdf = gdf.rename(
-            columns={
-                'slope_grad': 'StreamSlopeContinuous',
-                'slope': 'Slope 3x3',
-                'flowacc': 'area',
-            }
+            columns={slope_name[:10]: slope_name for slope_name in slope_names}
         )
         gdf = gdf.melt(
-            id_vars=gdf.columns.difference(slope_cols),
-            value_vars=slope_cols,
+            id_vars=gdf.columns.difference(slope_names),
+            value_vars=slope_names,
             var_name='slope_type',
             value_name='values',
         )
@@ -392,39 +392,72 @@ class Trial:
         self.logger_adapter.trial_context.update(context)
         self.logger_adapter.log(level=level, msg=msg, stacklevel=2)
 
-    def set_logger_multiprocess(
-        self, q: TrialQueue, default_logs: RichTableLogs
-    ) -> None:
-        qh = QueueHandler(q.logging)
-        logger = create_rich_logger(
-            self.__class__.__name__, default_logs, q.rich
+    def get_streams(
+        self, dem_preproc: WhiteboxRaster
+    ) -> StreamsComputationOutput:
+        streams = compute_streams(
+            dem_preproc,
+            self.config.hydrologic_analysis_config.streams_flow_accumulation_threshold,
+            main_stream=True,
+            logger=self.logger_adapter,
         )
-        logger.addHandler(qh)
-        logger.setLevel(logging.DEBUG)
-        self.logger = logger
-        self.logger_adapter = TrialLoggerAdapter(
-            self.logger, trial_name=self.config.name
+        write_whitebox(
+            streams.streams,
+            self.config.out_dir / 'streams.tif',
+            logger=self.logger_adapter,
+            overwrite=True,
         )
+        return streams
 
-    def set_logger(self) -> None:
-        if self.logger is None:
-            logger = m_logger.getChild(self.__class__.__name__)
-            self.logger = logger
-        self.logger_adapter = TrialLoggerAdapter(
-            self.logger, trial_name=self.config.name
+    def get_default_slope_providers(
+        self, streams_output: StreamsComputationOutput
+    ) -> SlopeProviders:
+        self.log('Creating default slope providers')
+        slope_3x3 = DefaultSlopeProviders.Slope3x3()
+        slope_continuous = DefaultSlopeProviders.StreamSlopeContinuous(
+            streams_output.flow.d8_pointer,
+            streams_output.streams,
+            self.config.hydrologic_analysis_config.streams_flow_accumulation_threshold,
         )
+        return {
+            'Slope3x3': slope_3x3,
+            'StreamSlopeContinuous': slope_continuous,
+        }
+
+    def compute_slopes(
+        self, slope_providers: SlopeProviders, dem_preproc: StrPath
+    ) -> dict[str, StrPath]:
+        results = {}
+        for slope_name, provider in slope_providers.items():
+            self.logger_adapter.info(
+                'Computing slope %r with provider %r'
+                % (slope_name, provider.__class__.__name__)
+            )
+            slope = provider.get_slope(
+                dem_preproc, out_file=self.config.out_dir / f'{slope_name}.tif'
+            )
+            results[slope_name] = slope
+        return results
 
     def execute(self) -> TrialResult:
         dem = self.get_dem()
         if self.config.resolution is not None:
             dem = self.get_resampled_dem(dem)
-        masked_dem = self.get_masked_dem(dem)
-        slope_grad = self.get_slope_gradient(masked_dem)
-        slope_3x3 = self.get_3x3_slope(masked_dem.file_name)
-        # streams = self.get_streams_as_points(slope_grad)
-        streams = self.get_main_stream_as_points(slope_grad)
-        profiles = self.get_profiles(slope_3x3, slope_grad, streams)
-        processed_profiles = self.process_profiles(profiles)
+        dem_preproc = self.get_masked_dem_preproc(dem)
+        streams_output = self.get_streams(dem_preproc)
+        streams_vec = self.get_streams_as_points(streams_output.streams)
+        slope_providers = self.config.slope_providers
+        if slope_providers is None:
+            slope_providers = self.get_default_slope_providers(streams_output)
+        slopes = self.compute_slopes(
+            slope_providers, dem_preproc=dem_preproc.file_name
+        )
+        profiles = self.get_profiles(
+            slopes, streams_output.flow.flow_accumulation, streams_vec
+        )
+        processed_profiles = self.process_profiles(
+            profiles, slope_names=list(slope_providers)
+        )
         return TrialResult(processed_profiles, self.config)
 
     def run_multiprocess(
