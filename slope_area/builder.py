@@ -40,7 +40,7 @@ from slope_area.console import (
     make_table,
     rich_table_logs_thread,
 )
-from slope_area.enums import TrialStatus
+from slope_area.enums import SlopeAreaMethod, TrialStatus
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
     DefaultSlopeProviders,
@@ -82,6 +82,7 @@ class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: StrPath
     out_fig: StrPath
+    method: SlopeAreaMethod = SlopeAreaMethod.MAIN_STREAM
     slope_providers: SlopeProviders | None = None
     plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
@@ -133,6 +134,7 @@ class ResolutionPlotBuilder(Builder):
                         resolution=resolution,
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
                         dem=self.dem,
+                        method=self.config.method,
                         out_dir=Path(self.config.out_dir) / trial_name,
                         slope_providers=self.config.slope_providers,
                     ),
@@ -177,6 +179,7 @@ class OutletPlotBuilder(Builder):
                         resolution=self.resolution,
                         dem=self.dem,
                         hydrologic_analysis_config=self.config.hydrologic_analysis_config,
+                        method=self.config.method,
                         out_dir=Path(self.config.out_dir) / trial_name,
                         slope_providers=self.config.slope_providers,
                     ),
@@ -206,6 +209,7 @@ class TrialConfig:
     dem: DEMProvider | Raster | StrPath
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
+    method: SlopeAreaMethod = SlopeAreaMethod.MAIN_STREAM
     slope_providers: SlopeProviders | None = None
     resolution: Resolution | None = None
 

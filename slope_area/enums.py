@@ -3,6 +3,11 @@ from __future__ import annotations
 from enum import StrEnum, auto
 
 
+class SlopeAreaMethod(StrEnum):
+    STREAMS = auto()
+    MAIN_STREAM = auto()
+
+
 class TrialStatus(StrEnum):
     NOT_STARTED = auto()
     RUNNING = auto()
