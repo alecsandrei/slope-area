@@ -58,7 +58,6 @@ from slope_area.logger import (
 from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
 from slope_area.utils import (
     read_whitebox_raster,
-    redirect_warnings,
     write_whitebox,
 )
 
@@ -313,22 +312,6 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def rename_profiles_fields(
-        self, profiles: Path, raster_names: c.Iterable[str]
-    ) -> None:
-        # This renames the fields.
-        # Can't figure out how to do it with the Whitebox Workflows API
-        assert self.logger is not None
-        with redirect_warnings(
-            self.logger_adapter, RuntimeWarning, module='pyogrio.raw'
-        ):
-            gpd.read_file(profiles).rename(
-                columns={
-                    f'VALUE{i}': raster_name[:10]  # shp only allows 10 chars
-                    for i, raster_name in enumerate(raster_names, start=1)
-                }
-            ).to_file(profiles)
-
     def get_profiles(
         self,
         slopes: dict[str, StrPath],
@@ -365,9 +348,17 @@ class Trial:
     ) -> gpd.GeoDataFrame:
         self.logger_adapter.info('Reading profiles %s' % profiles)
         gdf = gpd.read_file(profiles)
-        gdf = gdf.rename(
-            columns={slope_name[:10]: slope_name for slope_name in slope_names}
-        )
+        raster_names = list(slope_names)
+        raster_names.append('area')
+        rename_map = {
+            f'VALUE{i}': slope_name
+            for i, slope_name in enumerate(raster_names, start=1)
+        }
+
+        # Rename slopes. Whitebox Tools outputs VALUE1, VALUE2, etc.
+        # The last value is the flow accumulation
+        gdf = gdf.rename(columns=rename_map)
+
         gdf = gdf.melt(
             id_vars=gdf.columns.difference(slope_names),
             value_vars=slope_names,
