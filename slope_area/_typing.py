@@ -31,6 +31,8 @@ class TrialLoggingContext(t.TypedDict):
 
 @t.runtime_checkable
 class SlopeProvider(t.Protocol):
+    """Provides a percentage slope raster."""
+
     def get_slope(self, dem: StrPath, out_file: StrPath) -> StrPath: ...
 
 
