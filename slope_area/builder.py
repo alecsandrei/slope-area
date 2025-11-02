@@ -17,23 +17,15 @@ import time
 import traceback
 import typing as t
 
-from geopandas import gpd
+import numpy as np
 import pandas as pd
 import PySAGA_cmd
+import rasterio as rio
 from rich.live import Live
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
-from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import (
-    AnyLogger,
-    DEMProvider,
-    SlopeProviders,
-)
-from slope_area.config import (
-    IS_NOTEBOOK,
-    get_saga_env,
-    get_wbw_env,
-)
+from slope_area._typing import AnyLogger, DEMProvider, SlopeProviders
+from slope_area.config import IS_NOTEBOOK, get_saga_env, get_wbw_env
 from slope_area.console import (
     RichTableRowData,
     create_rich_logger,
@@ -56,10 +48,7 @@ from slope_area.logger import (
     turn_off_handlers,
 )
 from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
-from slope_area.utils import (
-    read_whitebox_raster,
-    write_whitebox,
-)
+from slope_area.utils import write_whitebox
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
@@ -301,74 +290,51 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-    def get_streams_as_points(self, streams: WhiteboxRaster) -> WhiteboxVector:
-        stream_profiles_path = self.config.out_dir / 'streams.shp'
-        stream_profiles = self.wbw_env.raster_to_vector_points(streams)
-        return write_whitebox(
-            stream_profiles,
-            stream_profiles_path,
-            overwrite=True,
-            wbw_env=self.wbw_env,
-            logger=self.logger_adapter,
-        )
-
-    def get_profiles(
+    def get_raster_values(
         self,
         slopes: dict[str, StrPath],
-        flow_acc: WhiteboxRaster,
-        streams: WhiteboxVector,
-    ) -> Path:
+        flow_acc: StrPath,
+        mask: StrPath | None,
+    ) -> pd.DataFrame:
         self.log('Generating profiles from stream network')
         if 'area' in slopes:
             raise ValueError(
                 '"area" is a reserved key and cannot be a slope provider'
             )
-        profiles_path = self.config.out_dir / 'profiles.shp'
-        rasters = {
-            slope_name: read_whitebox_raster(raster, logger=self.logger_adapter)
-            for slope_name, raster in slopes.items()
-        }
-        rasters['area'] = flow_acc
-        output = self.wbw_env.extract_raster_values_at_points(
-            rasters=list(rasters.values()),
-            points=streams,
-        )[0]
-        write_whitebox(
-            output,
-            profiles_path,
-            overwrite=True,
-            logger=self.logger_adapter,
-        )
+        rasters = slopes | {'area': flow_acc}
+        df = pd.DataFrame(columns=list(rasters))
 
-        return profiles_path
+        if mask is not None:
+            with rio.open(mask) as mask_src:
+                arr_mask: np.ma.MaskedArray = mask_src.read(1, masked=True)
 
-    def process_profiles(
-        self, profiles: Path, slope_names: c.Sequence[str]
-    ) -> gpd.GeoDataFrame:
-        self.logger_adapter.info('Reading profiles %s' % profiles)
-        gdf = gpd.read_file(profiles)
-        raster_names = list(slope_names)
-        raster_names.append('area')
-        rename_map = {
-            f'VALUE{i}': slope_name
-            for i, slope_name in enumerate(raster_names, start=1)
-        }
+        for name, raster in rasters.items():
+            with rio.open(raster) as src:
+                arr: np.ma.MaskedArray = src.read(1, masked=True)
+                if mask is not None:
+                    arr.mask = arr.mask | arr_mask.mask
+                arr_valid = arr[~arr.mask]
+                df[name] = arr_valid
 
-        # Rename slopes. Whitebox Tools outputs VALUE1, VALUE2, etc.
-        # The last value is the flow accumulation
-        gdf = gdf.rename(columns=rename_map)
+        df.to_csv(self.config.out_dir / 'values.csv')
+        return df
 
-        gdf = gdf.melt(
-            id_vars=gdf.columns.difference(slope_names),
+    def process_raster_values(
+        self, values: pd.DataFrame, slope_names: c.Sequence[str]
+    ) -> pd.DataFrame:
+        self.log('Processing raster values')
+        values = values.melt(
+            id_vars=values.columns.difference(slope_names),
             value_vars=slope_names,
             var_name='slope_type',
             value_name='values',
         )
-        slope_inv = gdf['values'] / 100
-        gdf['values'] = slope_inv
-        gdf = gdf.rename(columns={'values': 'slope'})
-        gdf['resolution'] = str(self.config.resolution)
-        return gdf
+        slope_inv = values['values'] / 100
+        values['values'] = slope_inv
+        values = values.rename(columns={'values': 'slope'})
+        values['resolution'] = str(self.config.resolution)
+        values.to_csv(self.config.out_dir / 'values_processed.csv')
+        return values
 
     def log(
         self,
@@ -430,7 +396,7 @@ class Trial:
     ) -> dict[str, StrPath]:
         results = {}
         for slope_name, provider in slope_providers.items():
-            self.logger_adapter.info(
+            self.log(
                 'Computing slope %r with provider %r'
                 % (slope_name, provider.__class__.__name__)
             )
@@ -446,18 +412,26 @@ class Trial:
             dem = self.get_resampled_dem(dem)
         dem_preproc = self.get_masked_dem_preproc(dem)
         streams_output = self.get_streams(dem_preproc)
-        streams_vec = self.get_streams_as_points(streams_output.streams)
         slope_providers = self.get_slope_providers(streams_output)
         slopes = self.compute_slopes(
             slope_providers, dem_preproc=dem_preproc.file_name
         )
-        profiles = self.get_profiles(
-            slopes, streams_output.flow.flow_accumulation, streams_vec
+
+        write_whitebox(
+            streams_output.flow.flow_accumulation,
+            self.config.out_dir / 'flow_accumulation.tif',
+            logger=self.logger_adapter,
+            overwrite=True,
+        )  # required to pass to get_raster_values
+        raster_values = self.get_raster_values(
+            slopes,
+            streams_output.flow.flow_accumulation.file_name,
+            streams_output.streams.file_name,
         )
-        processed_profiles = self.process_profiles(
-            profiles, slope_names=list(slope_providers)
+        processed = self.process_raster_values(
+            raster_values, slope_names=list(slope_providers)
         )
-        return TrialResult(processed_profiles, self.config)
+        return TrialResult(processed, self.config)
 
     def run_multiprocess(
         self, q: TrialQueue, default_logs: RichTableLogs
@@ -574,12 +548,10 @@ class TrialsExecutor:
 
 @dataclass
 class TrialResult:
-    profiles: pd.DataFrame
+    df: pd.DataFrame
     config: TrialConfig
 
 
 class TrialResults(UserList[TrialResult]):
     def to_dataframe(self) -> pd.DataFrame:
-        return pd.concat(
-            [r.profiles.assign(trial=r.config.name) for r in self.data]
-        )
+        return pd.concat([r.df.assign(trial=r.config.name) for r in self.data])
