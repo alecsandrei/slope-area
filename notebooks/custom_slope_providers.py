@@ -1,3 +1,5 @@
+"""SAGA version: 9.8.0"""
+
 from __future__ import annotations
 
 from slope_area._typing import SlopeProvider, StrPath
