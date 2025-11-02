@@ -100,6 +100,7 @@ def get_col_wrap(n_unique: int) -> int:
 class SlopeAreaPlotConfig:
     hue: str | None = None
     col: str | None = None
+    row: str | None = None
     log_interval: float = 0.25
     min_gradient: float = 0.01
     col_wrap: int = -1
@@ -110,11 +111,12 @@ class SlopeAreaPlotConfig:
     ylabel: str = 'Slope (m/m)'
     label_font_size: float = 16
     title_font_size: float = 10
-    legend_font_size: float = 10
     tick_font_size: float = 14
     add_vlines: bool = False
     kind: PlotKind = 'line'
     grid: bool = True
+    legend_font_size: float = 10
+    legend_title: str = ''
     legend: bool = True
     show: bool = False
 
@@ -130,7 +132,7 @@ def set_plot_options(config: SlopeAreaPlotConfig, ax: Axes) -> None:
     ax.set_box_aspect(config.aspect)
 
     if config.hue is not None and config.legend:
-        ax.legend(fontsize=config.legend_font_size)
+        ax.legend(fontsize=config.legend_font_size, title=config.legend_title)
     plt.tight_layout(pad=2)
 
 
@@ -152,8 +154,9 @@ def set_plot_options_facetgrid(
 
     plt.tight_layout(pad=2)
     if config.hue is not None and config.legend:
-        facet_grid.add_legend(fontsize=config.legend_font_size, title='')
-        # facet_grid.axes.flat[0].legend(fontsize=config.legend_font_size)
+        facet_grid.add_legend(
+            fontsize=config.legend_font_size, title=config.legend_title
+        )
 
 
 def slope_area_grid(
@@ -175,6 +178,7 @@ def slope_area_grid(
         data,
         hue=config.hue,
         col=config.col,
+        row=config.row,
         height=config.height,
         aspect=config.aspect,
         col_wrap=col_wrap,
