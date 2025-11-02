@@ -29,6 +29,8 @@ m_logger = create_logger(__name__)
 class DefaultSlopeProviders:
     @dataclass
     class SAGASlope(SlopeProvider):
+        """Computes slope using the SAGA GIS Terrain Analysis tool."""
+
         method: int = 6
 
         def get_slope(self, dem: StrPath, out_file: StrPath) -> Path:
@@ -36,6 +38,12 @@ class DefaultSlopeProviders:
 
     @dataclass
     class StreamSlopeContinuous(StreamSlopeProvider):
+        """Computes slope gradient using precomputed streams.
+
+        More docs here
+        https://www.whiteboxgeo.com/manual/wbt_book/available_tools/stream_network_analysis.html#StreamSlopeContinuous
+        """
+
         def get_stream_slope(
             self,
             streams: StreamsComputationOutput,
