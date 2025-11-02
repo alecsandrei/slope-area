@@ -403,6 +403,13 @@ class Trial:
         )
         return streams
 
+    def get_slope_providers(
+        self, streams_output: StreamsComputationOutput
+    ) -> SlopeProviders:
+        if self.config.slope_providers is None:
+            return self.get_default_slope_providers(streams_output)
+        return self.config.slope_providers
+
     def get_default_slope_providers(
         self, streams_output: StreamsComputationOutput
     ) -> SlopeProviders:
@@ -440,9 +447,7 @@ class Trial:
         dem_preproc = self.get_masked_dem_preproc(dem)
         streams_output = self.get_streams(dem_preproc)
         streams_vec = self.get_streams_as_points(streams_output.streams)
-        slope_providers = self.config.slope_providers
-        if slope_providers is None:
-            slope_providers = self.get_default_slope_providers(streams_output)
+        slope_providers = self.get_slope_providers(streams_output)
         slopes = self.compute_slopes(
             slope_providers, dem_preproc=dem_preproc.file_name
         )
