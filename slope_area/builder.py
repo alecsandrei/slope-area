@@ -340,7 +340,6 @@ class Trial:
             logger=self.logger_adapter,
         )
 
-        self.rename_profiles_fields(profiles_path, rasters)
         return profiles_path
 
     def process_profiles(
