@@ -42,7 +42,7 @@ trial = Trial(trial_config).run()
 slope_area_plot(
     data=trial.profiles,
     out_fig=out_fig,
-    config=SlopeAreaPlotConfig(hue='slope_type'),
+    config=SlopeAreaPlotConfig(hue='slope_type', legend_font_size=8),
 )
 ```
 <img src="https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/00_minimal_example/slope_area.png" alt="drawing" width="400"/>
