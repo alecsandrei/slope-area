@@ -392,7 +392,7 @@ class Trial:
         streams = compute_streams(
             dem_preproc,
             self.config.hydrologic_analysis_config.streams_flow_accumulation_threshold,
-            main_stream=True,
+            main_stream=self.config.method is SlopeAreaMethod.MAIN_STREAM,
             logger=self.logger_adapter,
         )
         write_whitebox(
