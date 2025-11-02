@@ -38,13 +38,14 @@ trial_config = TrialConfig(
     ),
     out_dir=out_dir,
 )
-trial = Trial(trial_config).run()
+result = Trial(trial_config).run()
 slope_area_plot(
-    data=trial.profiles,
+    data=result.df,
     out_fig=out_fig,
-    config=SlopeAreaPlotConfig(hue='slope_type', legend_font_size=8),
+    config=SlopeAreaPlotConfig(hue=Column.SLOPE_TYPE, legend_font_size=8),
 )
 ```
+
 <img src="https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/00_minimal_example/slope_area.png" alt="drawing" width="400"/>
 
 ### Run trials with multiprocessing
@@ -63,7 +64,7 @@ builder_config = BuilderConfig(
     ),
     out_dir=out_dir,
     out_fig=out_fig,
-    plot_config=SlopeAreaPlotConfig(hue='slope_type'),
+    plot_config=SlopeAreaPlotConfig(hue=Column.SLOPE_TYPE),
     max_workers=max_workers,
 )
 results = ResolutionPlotBuilder(
@@ -74,6 +75,17 @@ results = ResolutionPlotBuilder(
 ![console](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/assets/console.webp)
 
 ![slope-area-plot-2](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/02_internal_example/resolution_builder/slope_area.png)
+
+### [Run trials with custom slope providers](https://github.com/alecsandrei/slope-area/blob/main/notebooks/03_custom_slope_providers.ipynb)
+
+```py
+builder_config = BuilderConfig(
+    ...
+    slope_providers=slope_providers,  # Custom slope providers
+)
+```
+
+![slope-area-plot-3](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/03_custom_slope_providers/outlet_builder/slope_area.png)
 
 ## Installation
 
