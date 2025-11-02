@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from slope_area.enums import Column
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
@@ -184,11 +185,11 @@ def slope_area_grid(
         col_wrap=col_wrap,
         legend_out=config.legend,
     )
-    slope = data['slope']
+    slope = data[Column.SLOPE_VALUES]
     g = g.map_dataframe(
         slope_area_plot_func,
-        'area',
-        'slope',
+        Column.AREA_VALUES,
+        Column.SLOPE_VALUES,
         config=config,
         ymin=slope.min(),
         ymax=slope.max(),
@@ -210,7 +211,13 @@ def slope_area_plot_single(
 ) -> Axes:
     if ax is None:
         fig, ax = plt.subplots()
-    func = partial(slope_area_plot_func, 'area', 'slope', config=config, ax=ax)
+    func = partial(
+        slope_area_plot_func,
+        Column.AREA_VALUES,
+        Column.SLOPE_VALUES,
+        config=config,
+        ax=ax,
+    )
     if config.hue is not None:
         for grouper, group in data.groupby(config.hue):
             func(label=grouper, data=group)

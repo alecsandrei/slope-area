@@ -10,6 +10,7 @@ if t.TYPE_CHECKING:
     from slope_area.console import RichTableRowData
     from slope_area.enums import TrialStatus
     from slope_area.features import Outlet, Raster
+    from slope_area.geomorphometry import StreamsComputationOutput
 
 type StrPath = str | PathLike[str]
 type PlotKind = t.Literal['line', 'scatter']
@@ -21,7 +22,7 @@ type AnyCRS = WKTProvider | EPSG
 
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
-type SlopeProviders = c.Mapping[str, SlopeProvider]
+type SlopeProviders = c.Mapping[str, SlopeProvider | StreamSlopeProvider]
 
 
 class TrialLoggingContext(t.TypedDict):
@@ -34,6 +35,15 @@ class SlopeProvider(t.Protocol):
     """Provides a percentage slope raster."""
 
     def get_slope(self, dem: StrPath, out_file: StrPath) -> StrPath: ...
+
+
+@t.runtime_checkable
+class StreamSlopeProvider(t.Protocol):
+    """Provides a percentage slope raster."""
+
+    def get_stream_slope(
+        self, streams: StreamsComputationOutput, out_file: StrPath
+    ) -> StrPath: ...
 
 
 @t.runtime_checkable

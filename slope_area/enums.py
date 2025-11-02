@@ -19,3 +19,11 @@ class TrialStatus(StrEnum):
 
     def display(self) -> str:
         return self.replace('_', ' ').capitalize()
+
+
+class Column(StrEnum):
+    AREA_VALUES = 'area'
+    SLOPE_VALUES = 'slope'
+    SLOPE_TYPE = 'slope_type'
+    TRIAL_NAME = 'trial'
+    RESOLUTION = 'resolution'

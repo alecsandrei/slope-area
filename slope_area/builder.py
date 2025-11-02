@@ -24,7 +24,13 @@ import rasterio as rio
 from rich.live import Live
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 
-from slope_area._typing import AnyLogger, DEMProvider, SlopeProviders
+from slope_area._typing import (
+    AnyLogger,
+    DEMProvider,
+    SlopeProvider,
+    SlopeProviders,
+    StreamSlopeProvider,
+)
 from slope_area.config import IS_NOTEBOOK, get_saga_env, get_wbw_env
 from slope_area.console import (
     RichTableRowData,
@@ -32,14 +38,19 @@ from slope_area.console import (
     make_table,
     rich_table_logs_thread,
 )
-from slope_area.enums import SlopeAreaMethod, TrialStatus
+from slope_area.enums import (
+    Column,
+    SlopeAreaMethod,
+    TrialStatus,
+)
 from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
     DefaultSlopeProviders,
     HydrologicAnalysisConfig,
     StreamsComputationOutput,
+    compute_flow,
     compute_streams,
-    mask_dem_with_watershed,
+    compute_watershed,
     preprocess_dem,
 )
 from slope_area.logger import (
@@ -48,7 +59,7 @@ from slope_area.logger import (
     turn_off_handlers,
 )
 from slope_area.plot import SlopeAreaPlotConfig, slope_area_grid
-from slope_area.utils import write_whitebox
+from slope_area.utils import mask_raster, write_whitebox
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
@@ -70,7 +81,7 @@ class BuilderConfig:
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: StrPath
     out_fig: StrPath
-    method: SlopeAreaMethod = SlopeAreaMethod.MAIN_STREAM
+    method: SlopeAreaMethod = SlopeAreaMethod.STREAMS
     slope_providers: SlopeProviders | None = None
     plot_config: SlopeAreaPlotConfig | None = None
     max_workers: int | None = None
@@ -197,7 +208,7 @@ class TrialConfig:
     dem: DEMProvider | Raster | StrPath
     hydrologic_analysis_config: HydrologicAnalysisConfig
     out_dir: Path
-    method: SlopeAreaMethod = SlopeAreaMethod.MAIN_STREAM
+    method: SlopeAreaMethod = SlopeAreaMethod.STREAMS
     slope_providers: SlopeProviders | None = None
     resolution: Resolution | None = None
 
@@ -253,89 +264,6 @@ class Trial:
             self.logger, trial_name=self.config.name
         )
 
-    def get_dem(self) -> Raster:
-        if isinstance(self.config.dem, DEMProvider):
-            self.log('Getting the DEM raster from dem_provider')
-            return self.config.dem.get_dem(
-                outlet=self.config.outlet,
-                logger=self.logger_adapter,
-            )
-        elif isinstance(self.config.dem, (str, PathLike)):
-            return Raster(self.config.dem)
-        return self.config.dem
-
-    def get_masked_dem_preproc(self, dem: Raster) -> WhiteboxRaster:
-        wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
-        dem_preproc = preprocess_dem(dem, logger=self.logger_adapter)
-        masked_dem = mask_dem_with_watershed(
-            dem_preproc,
-            outlet=wbw_outlet,
-            outlet_snap_distance=self.config.hydrologic_analysis_config.outlet_snap_distance,
-            logger=self.logger_adapter,
-        )
-        write_whitebox(
-            masked_dem,
-            out_file=self.config.out_dir / 'dem_preproc_mask.tif',
-            logger=self.logger_adapter,
-            overwrite=True,
-        )
-        return masked_dem
-
-    def get_resampled_dem(self, raster: Raster) -> Raster:
-        assert self.config.resolution is not None
-        dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
-        return raster.resample(
-            out_file=dem_resampled_path,
-            resolution=self.config.resolution,
-            logger=self.logger_adapter,
-        )
-
-    def get_raster_values(
-        self,
-        slopes: dict[str, StrPath],
-        flow_acc: StrPath,
-        mask: StrPath | None,
-    ) -> pd.DataFrame:
-        self.log('Generating profiles from stream network')
-        if 'area' in slopes:
-            raise ValueError(
-                '"area" is a reserved key and cannot be a slope provider'
-            )
-        rasters = slopes | {'area': flow_acc}
-        df = pd.DataFrame(columns=list(rasters))
-
-        if mask is not None:
-            with rio.open(mask) as mask_src:
-                arr_mask: np.ma.MaskedArray = mask_src.read(1, masked=True)
-
-        for name, raster in rasters.items():
-            with rio.open(raster) as src:
-                arr: np.ma.MaskedArray = src.read(1, masked=True)
-                if mask is not None:
-                    arr.mask = arr.mask | arr_mask.mask
-                arr_valid = arr[~arr.mask]
-                df[name] = arr_valid
-
-        df.to_csv(self.config.out_dir / 'values.csv')
-        return df
-
-    def process_raster_values(
-        self, values: pd.DataFrame, slope_names: c.Sequence[str]
-    ) -> pd.DataFrame:
-        self.log('Processing raster values')
-        values = values.melt(
-            id_vars=values.columns.difference(slope_names),
-            value_vars=slope_names,
-            var_name='slope_type',
-            value_name='values',
-        )
-        slope_inv = values['values'] / 100
-        values['values'] = slope_inv
-        values = values.rename(columns={'values': 'slope'})
-        values['resolution'] = str(self.config.resolution)
-        values.to_csv(self.config.out_dir / 'values_processed.csv')
-        return values
-
     def log(
         self,
         msg: str = '',
@@ -352,11 +280,103 @@ class Trial:
         self.logger_adapter.trial_context.update(context)
         self.logger_adapter.log(level=level, msg=msg, stacklevel=2)
 
+    def get_dem(self) -> Raster:
+        if isinstance(self.config.dem, DEMProvider):
+            self.log('Getting the DEM raster from dem_provider')
+            return self.config.dem.get_dem(
+                outlet=self.config.outlet,
+                logger=self.logger_adapter,
+            )
+        elif isinstance(self.config.dem, (str, PathLike)):
+            return Raster(self.config.dem)
+        return self.config.dem
+
+    def get_dem_preproc_masked(self, dem: Raster) -> WhiteboxRaster:
+        dem_preproc = preprocess_dem(dem, logger=self.logger_adapter)
+        flow_acc = compute_flow(dem_preproc, logger=self.logger_adapter)
+
+        wbw_outlet = Outlets([self.config.outlet]).to_whitebox_vector(dem.crs)
+        watershed = compute_watershed(
+            flow_acc,
+            wbw_outlet,
+            outlet_snap_distance=self.config.hydrologic_analysis_config.outlet_snap_distance,
+            logger=self.logger_adapter,
+        )
+        dem_masked = mask_raster(
+            dem_preproc, watershed.watershed, logger=self.logger_adapter
+        )
+        out_file = self.config.out_dir / 'dem_preproc_mask.tif'
+        write_whitebox(
+            dem_masked,
+            out_file=out_file,
+            logger=self.logger_adapter,
+            overwrite=True,
+        )
+        return dem_masked
+
+    def get_resampled_dem(self, raster: Raster) -> Raster:
+        assert self.config.resolution is not None
+        dem_resampled_path = self.config.out_dir / 'dem_resampled.tif'
+        return raster.resample(
+            out_file=dem_resampled_path,
+            resolution=self.config.resolution,
+            logger=self.logger_adapter,
+        )
+
+    def get_raster_values(
+        self,
+        slopes: dict[str, StrPath],
+        flow_acc: StrPath,
+        mask: StrPath | None = None,
+    ) -> pd.DataFrame:
+        self.log('Generating profiles from stream network')
+        if 'area' in slopes:
+            raise ValueError(
+                '"area" is a reserved key and cannot be a slope provider'
+            )
+        rasters = slopes | {'area': flow_acc}
+        df = pd.DataFrame(columns=list(rasters))
+
+        if mask is not None:
+            with rio.open(mask) as mask_src:
+                arr_mask: np.ma.MaskedArray = mask_src.read(1, masked=True)
+
+        for name, raster in rasters.items():
+            with rio.open(raster) as src:
+                arr: np.ma.MaskedArray = src.read(1, masked=True)
+                assert arr.shape == arr_mask.shape, (
+                    f'{raster} does not have the same shape as {mask}'
+                )
+                if mask is not None:
+                    arr.mask = arr.mask | arr_mask.mask
+                arr_valid = arr[~arr.mask]
+                df[name] = arr_valid
+
+        df.to_csv(self.config.out_dir / 'values.csv', index=False)
+        return df
+
+    def process_raster_values(
+        self, values: pd.DataFrame, slope_names: c.Sequence[str]
+    ) -> pd.DataFrame:
+        self.log('Processing raster values')
+        values = values.melt(
+            id_vars=values.columns.difference(slope_names),
+            value_vars=slope_names,
+            var_name=Column.SLOPE_TYPE,
+            value_name=Column.SLOPE_VALUES,
+        )
+        values[Column.SLOPE_VALUES] = values[Column.SLOPE_VALUES] / 100
+        values[Column.RESOLUTION] = str(self.config.resolution)
+        values[Column.TRIAL_NAME] = self.config.name
+        values.to_csv(self.config.out_dir / 'values_processed.csv', index=False)
+        return values
+
     def get_streams(
         self, dem_preproc: WhiteboxRaster
     ) -> StreamsComputationOutput:
+        flow = compute_flow(dem_preproc, logger=self.logger_adapter)
         streams = compute_streams(
-            dem_preproc,
+            flow,
             self.config.hydrologic_analysis_config.streams_flow_accumulation_threshold,
             main_stream=self.config.method is SlopeAreaMethod.MAIN_STREAM,
             logger=self.logger_adapter,
@@ -373,26 +393,18 @@ class Trial:
         self, streams_output: StreamsComputationOutput
     ) -> SlopeProviders:
         if self.config.slope_providers is None:
-            return self.get_default_slope_providers(streams_output)
+            return {
+                'Slope3x3': DefaultSlopeProviders.SAGASlope(),
+                'StreamSlopeContinuous': DefaultSlopeProviders.StreamSlopeContinuous(),
+            }
+
         return self.config.slope_providers
 
-    def get_default_slope_providers(
-        self, streams_output: StreamsComputationOutput
-    ) -> SlopeProviders:
-        self.log('Creating default slope providers')
-        slope_3x3 = DefaultSlopeProviders.Slope3x3()
-        slope_continuous = DefaultSlopeProviders.StreamSlopeContinuous(
-            streams_output.flow.d8_pointer,
-            streams_output.streams,
-            self.config.hydrologic_analysis_config.streams_flow_accumulation_threshold,
-        )
-        return {
-            'Slope3x3': slope_3x3,
-            'StreamSlopeContinuous': slope_continuous,
-        }
-
     def compute_slopes(
-        self, slope_providers: SlopeProviders, dem_preproc: StrPath
+        self,
+        slope_providers: SlopeProviders,
+        dem_preproc: StrPath,
+        streams_computation_output: StreamsComputationOutput,
     ) -> dict[str, StrPath]:
         results = {}
         for slope_name, provider in slope_providers.items():
@@ -400,9 +412,15 @@ class Trial:
                 'Computing slope %r with provider %r'
                 % (slope_name, provider.__class__.__name__)
             )
-            slope = provider.get_slope(
-                dem_preproc, out_file=self.config.out_dir / f'{slope_name}.tif'
-            )
+            out_file = self.config.out_dir / f'{slope_name}.tif'
+            if isinstance(provider, SlopeProvider):
+                slope = provider.get_slope(dem_preproc, out_file=out_file)
+            elif isinstance(provider, StreamSlopeProvider):
+                slope = provider.get_stream_slope(
+                    streams_computation_output, out_file=out_file
+                )
+            else:
+                raise ValueError(f'Did not expect provider {provider}')
             results[slope_name] = slope
         return results
 
@@ -410,11 +428,13 @@ class Trial:
         dem = self.get_dem()
         if self.config.resolution is not None:
             dem = self.get_resampled_dem(dem)
-        dem_preproc = self.get_masked_dem_preproc(dem)
-        streams_output = self.get_streams(dem_preproc)
+        masked_dem = self.get_dem_preproc_masked(dem)
+        streams_output = self.get_streams(masked_dem)
         slope_providers = self.get_slope_providers(streams_output)
         slopes = self.compute_slopes(
-            slope_providers, dem_preproc=dem_preproc.file_name
+            slope_providers,
+            dem_preproc=masked_dem.file_name,
+            streams_computation_output=streams_output,
         )
 
         write_whitebox(
@@ -554,4 +574,4 @@ class TrialResult:
 
 class TrialResults(UserList[TrialResult]):
     def to_dataframe(self) -> pd.DataFrame:
-        return pd.concat([r.df.assign(trial=r.config.name) for r in self.data])
+        return pd.concat([r.df for r in self.data])

@@ -9,11 +9,10 @@ import typing as t
 from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
 from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import SlopeProvider
+from slope_area._typing import SlopeProvider, StreamSlopeProvider
 from slope_area.config import get_saga_env, get_wbw_env
 from slope_area.logger import create_logger
 from slope_area.utils import (
-    mask_raster,
     read_whitebox_raster,
     read_whitebox_vector,
     suppress_stdout_stderr,
@@ -29,24 +28,21 @@ m_logger = create_logger(__name__)
 
 class DefaultSlopeProviders:
     @dataclass
-    class Slope3x3(SlopeProvider):
+    class SAGASlope(SlopeProvider):
+        method: int = 6
+
         def get_slope(self, dem: StrPath, out_file: StrPath) -> Path:
-            return compute_3x3_slope(dem, out_file, method=6)
+            return compute_3x3_slope(dem, out_file, method=self.method)
 
     @dataclass
-    class StreamSlopeContinuous(SlopeProvider):
-        d8_pointer: WhiteboxRaster | StrPath
-        streams: WhiteboxRaster | StrPath
-        streams_flow_accumulation_threshold: float
-
-        def get_slope(self, dem: StrPath, out_file: StrPath) -> Path:
-            slope_grad = compute_slope_gradient(
-                self.d8_pointer,
-                self.streams,
-                dem,
-                self.streams_flow_accumulation_threshold,
-            )
-            write_whitebox(slope_grad, out_file, overwrite=True)
+    class StreamSlopeContinuous(StreamSlopeProvider):
+        def get_stream_slope(
+            self,
+            streams: StreamsComputationOutput,
+            out_file: StrPath,
+        ) -> Path:
+            output = compute_slope_gradient(streams)
+            write_whitebox(output.slope_gradient, out_file, overwrite=True)
             return Path(out_file)
 
 
@@ -72,6 +68,12 @@ class WatershedComputationOutput(ComputationOutput):
 class StreamsComputationOutput(ComputationOutput):
     flow: FlowAccumulationComputationOutput
     streams: WhiteboxRaster
+
+
+@dataclass(frozen=True)
+class SlopeGradientComputationOutput(ComputationOutput):
+    streams: StreamsComputationOutput
+    slope_gradient: WhiteboxRaster
 
 
 @dataclass(frozen=True)
@@ -111,95 +113,72 @@ def compute_flow(
 
 @timeit(m_logger, logging.INFO)
 def compute_watershed(
-    dem_preproc: WhiteboxRaster | StrPath,
+    flow_accumulation_output: FlowAccumulationComputationOutput,
     outlet: WhiteboxVector | StrPath,
     outlet_snap_distance: float | None = None,
     *,
     logger: AnyLogger = m_logger,
 ) -> WatershedComputationOutput:
+    logger.info('Computing watershed')
     wbw_env = get_wbw_env()
     outlet = read_whitebox_vector(outlet, logger=logger)
-    dem_preproc = read_whitebox_raster(dem_preproc, logger=logger)
-    flow_output = compute_flow(dem_preproc, logger=logger)
     if outlet_snap_distance:
         logger.info(
             'Snapping the outlet using a snap distance of %.1f'
             % outlet_snap_distance
         )
         outlet = wbw_env.snap_pour_points(
-            outlet, flow_output.flow_accumulation, outlet_snap_distance
+            outlet,
+            flow_accumulation_output.flow_accumulation,
+            outlet_snap_distance,
         )
     logger.info('Computing the watershed')
-    watershed = wbw_env.watershed(flow_output.d8_pointer, outlet)
-    return WatershedComputationOutput(flow_output, outlet, watershed)
-
-
-@timeit(m_logger, logging.INFO)
-def mask_dem_with_watershed(
-    dem_preproc: WhiteboxRaster | StrPath,
-    outlet: WhiteboxVector | StrPath,
-    outlet_snap_distance: float | None = None,
-    *,
-    logger: AnyLogger = m_logger,
-) -> WhiteboxRaster:
-    dem_preproc = read_whitebox_raster(dem_preproc, logger=logger)
-    outlet = read_whitebox_vector(outlet, logger=logger)
-
-    # ---- Computing the watershed ----
-    watershed_output = compute_watershed(
-        dem_preproc, outlet, outlet_snap_distance, logger=logger
+    watershed = wbw_env.watershed(flow_accumulation_output.d8_pointer, outlet)
+    return WatershedComputationOutput(
+        flow_accumulation_output, outlet, watershed
     )
-
-    # ---- Using the watershed to mask the DEM ----
-    logger.info('Masking the preprocessed DEM with the watershed')
-    return mask_raster(dem_preproc, watershed_output.watershed, logger=logger)
 
 
 @timeit(m_logger, logging.INFO)
 def compute_streams(
-    dem_preproc: WhiteboxRaster | StrPath,
+    flow_accumulation_output: FlowAccumulationComputationOutput,
     flow_accumulation_threshold: float,
     main_stream: bool = True,
     *,
     logger: AnyLogger = m_logger,
 ) -> StreamsComputationOutput:
+    logger.info(
+        'Computing streams with flow accumulation threshold %.1f'
+        % flow_accumulation_threshold
+    )
     wbw_env = get_wbw_env()
-    flow_watershed = compute_flow(dem_preproc, logger=logger)
     streams = wbw_env.extract_streams(
-        flow_watershed.flow_accumulation,
-        flow_accumulation_threshold,
+        flow_accumulation_output.flow_accumulation, flow_accumulation_threshold
     )
     if main_stream:
-        streams = wbw_env.find_main_stem(flow_watershed.d8_pointer, streams)
-    return StreamsComputationOutput(flow=flow_watershed, streams=streams)
+        streams = wbw_env.find_main_stem(
+            flow_accumulation_output.d8_pointer,
+            streams,
+        )
+    return StreamsComputationOutput(flow_accumulation_output, streams)
 
 
 @timeit(m_logger, logging.INFO)
 def compute_slope_gradient(
-    d8_pointer: WhiteboxRaster | StrPath,
-    streams: WhiteboxRaster | StrPath,
-    dem_preproc: WhiteboxRaster | StrPath,
-    streams_flow_accumulation_threshold: float,
+    streams_output: StreamsComputationOutput,
     *,
     logger: AnyLogger = m_logger,
-) -> WhiteboxRaster:
+) -> SlopeGradientComputationOutput:
     wbw_env = get_wbw_env()
-    d8_pointer = read_whitebox_raster(d8_pointer, logger=logger)
-    streams = read_whitebox_raster(streams, logger=logger)
-    dem_preproc = read_whitebox_raster(dem_preproc, logger=logger)
-
-    # ---- Computing the slope gradient for the masked DEM ----
-    logger.info(
-        'Computing the slope gradient for the main stream in the watershed'
-    )
+    logger.info('Computing the slope gradient')
     slope_gradient = degree_to_percent(
         wbw_env.stream_slope_continuous(
-            d8_pointer,
-            streams,
-            dem_preproc,
+            streams_output.flow.d8_pointer,
+            streams_output.streams,
+            streams_output.flow.dem_preproc,
         )
     )
-    return slope_gradient
+    return SlopeGradientComputationOutput(streams_output, slope_gradient)
 
 
 @timeit(m_logger, logging.INFO)

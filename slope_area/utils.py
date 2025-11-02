@@ -123,6 +123,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
 ) -> T:
     if wbw_env is None:
         wbw_env = get_wbw_env()
+    os.makedirs(Path(out_file).parent, exist_ok=True)
     out_file_str = os.fspath(out_file)
     if logger is None:
         logger = create_logger(__name__)

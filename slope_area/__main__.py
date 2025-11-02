@@ -17,6 +17,7 @@ from slope_area.builder import (
     OutletPlotBuilder,
     ResolutionPlotBuilder,
 )
+from slope_area.enums import Column
 from slope_area.features import Outlets
 from slope_area.geomorphometry import HydrologicAnalysisConfig
 from slope_area.logger import create_logger
@@ -53,8 +54,8 @@ def main() -> None:
         streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
     )
     plot_config = SlopeAreaPlotConfig(
-        hue='slope_type',
-        col='trial',
+        hue=Column.SLOPE_TYPE,
+        col=Column.TRIAL_NAME,
         log_interval=0.25,
         min_gradient=0.01,
         col_wrap=-1,
