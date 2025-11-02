@@ -4,7 +4,10 @@ from enum import StrEnum, auto
 
 
 class SlopeAreaMethod(StrEnum):
+    # Slope area values for all of the streams
     STREAMS = auto()
+
+    # Slope area values for the main stream
     MAIN_STREAM = auto()
 
 
