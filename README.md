@@ -30,20 +30,13 @@ Tool that can be used to generate slope-area plots and other analysis.
 
 ```py
 outlet = Outlet.from_xy(711339, 533362, name='outlet')
-trial_config = TrialConfig(
-    outlet.name,
-    outlet,
-    dem=dem,
-    hydrologic_analysis_config=HydrologicAnalysisConfig(
-        streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
-    ),
-    out_dir=out_dir,
+context = TrialContext(
+    out_dir=out_dir, data=TrialData(outlet, dem, resolution=None)
 )
-result = Trial(trial_config).run()
-slope_area_plot(
-    data=result.df,
-    out_fig=out_fig,
+result = Trial(f'Trial {outlet.name}', context=context).run()
+result.plot(
     config=SlopeAreaPlotConfig(hue=Column.SLOPE_TYPE, legend_font_size=8),
+    out_fig=out_fig,
 )
 ```
 
@@ -55,38 +48,47 @@ slope_area_plot(
 Trials([trial_1, trial_2, trial_3]).run(max_workers=3)
 ```
 
-### Run trials with Builder objects
+### Create trials with Trial factories
 
 ```py
-resolutions = [(res, res) for res in range(5, 15)]
-builder_config = BuilderConfig(
-    hydrologic_analysis_config=HydrologicAnalysisConfig(
-        streams_flow_accumulation_threshold=1000, outlet_snap_distance=100
-    ),
-    out_dir=out_dir,
-    out_fig=out_fig,
-    plot_config=SlopeAreaPlotConfig(hue=Column.SLOPE_TYPE),
-    max_workers=max_workers,
+resolutions = [(res, res) for res in range(30, 60, 5)]
+context = TrialFactoryContext(
+    dem=dem, out_dir=out_dir, analysis=analysis_config
 )
-results = ResolutionPlotBuilder(
-    builder_config, dem, outlet, resolutions
-).build()
+trials = ResolutionTrialFactory(
+    context=context, outlet=outlet, resolutions=resolutions
+).generate()
+results = trials.run(max_workers)
+grid = results.plot(config=plot_config, out_fig=out_fig)
 ```
+
+Console while running trials in parallel.
 
 ![console](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/assets/console.webp)
 
-![slope-area-plot-2](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/02_internal_example/resolution_builder/slope_area.png)
+![slope-area-plot-2](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/01_plot_from_outlets/resolution/slope_area.png)
 
 ### [Run trials with custom slope providers](https://github.com/alecsandrei/slope-area/blob/main/notebooks/03_custom_slope_providers.ipynb)
 
 ```py
-builder_config = BuilderConfig(
+slope_providers: SlopeProviders = {
+    method_name: DefaultSlopeProviders.SAGASlope(method=i)
+    for i, method_name in enumerate(
+        (
+            'maximum slope (Travis et al. 1975)',
+            'maximum triangle slope (Tarboton 1997)',
+            ...
+        )
+    )
+}
+...
+analysis_config = AnalysisConfig(
     ...
-    slope_providers=slope_providers,  # Custom slope providers
+    slope_providers=slope_providers,
 )
 ```
 
-![slope-area-plot-3](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/03_custom_slope_providers/outlet_builder/slope_area.png)
+![slope-area-plot-3](https://raw.githubusercontent.com/alecsandrei/slope-area/refs/heads/main/data/processed/03_custom_slope_providers/outlet/slope_area.png)
 
 ## Installation
 
