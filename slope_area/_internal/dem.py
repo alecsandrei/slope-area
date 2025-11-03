@@ -107,11 +107,7 @@ class GeneralizedDEM(Raster):
         logger = m_logger.getChild(self.__class__.__name__)
         flow = compute_flow(self.path, logger=logger)
         outputs = (flow.dem_preproc, flow.d8_pointer, flow.flow_accumulation)
-        write_whitebox_func = partial(
-            write_whitebox,
-            overwrite=True,
-            logger=logger,
-        )
+        write_whitebox_func = partial(write_whitebox, logger=logger)
         for wbw_raster, out_file in zip(outputs, rasters):
             write_whitebox_func(wbw_raster, out_file)
         return flow
@@ -288,12 +284,7 @@ class DEMTiles:
             dem_source.generalized_dem.d8_pointer, wbw_outlet_snapped
         )
         watershed_vec = wbw_env.raster_to_vector_polygons(watershed)
-        write_whitebox(
-            watershed_vec,
-            out_dir / 'watershed.shp',
-            logger=logger,
-            overwrite=True,
-        )
+        write_whitebox(watershed_vec, out_dir / 'watershed.shp', logger=logger)
         with redirect_warnings(logger, RuntimeWarning, 'pyogrio.raw'):
             watershed = (
                 gpd.read_file(watershed_vec.file_name)

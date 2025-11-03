@@ -21,12 +21,19 @@ from slope_area.utils import (
 )
 
 if t.TYPE_CHECKING:
-    from slope_area._typing import AnyLogger, StrPath
+    from slope_area._typing import AnyLogger, SlopeProviders, StrPath
 
 m_logger = create_logger(__name__)
 
 
 class DefaultSlopeProviders:
+    @classmethod
+    def get_default_providers(cls) -> SlopeProviders:
+        return {
+            'Slope 3x3': cls.SAGASlope(),
+            'Stream Slope Continuous': cls.StreamSlopeContinuous(),
+        }
+
     @dataclass
     class SAGASlope(SlopeProvider):
         """Computes slope using the SAGA GIS Terrain Analysis tool."""
@@ -50,7 +57,7 @@ class DefaultSlopeProviders:
             out_file: StrPath,
         ) -> Path:
             output = compute_slope_gradient(streams)
-            write_whitebox(output.slope_gradient, out_file, overwrite=True)
+            write_whitebox(output.slope_gradient, out_file)
             return Path(out_file)
 
 
@@ -82,12 +89,6 @@ class StreamsComputationOutput(ComputationOutput):
 class SlopeGradientComputationOutput(ComputationOutput):
     streams: StreamsComputationOutput
     slope_gradient: WhiteboxRaster
-
-
-@dataclass(frozen=True)
-class HydrologicAnalysisConfig:
-    streams_flow_accumulation_threshold: int = 1000
-    outlet_snap_distance: int = 100
 
 
 @timeit(m_logger, logging.INFO)

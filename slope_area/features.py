@@ -113,7 +113,7 @@ class Outlets(UserList[Outlet]):
 
         outlets = [
             Outlet(
-                name=(row[name_field] if name_field else str(i)),
+                name=(row[name_field] if name_field else str(i + 1)),
                 geom=row.geometry,
             )
             for i, row in gdf.iterrows()

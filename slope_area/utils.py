@@ -118,7 +118,7 @@ def write_whitebox[T: WhiteboxRaster | WhiteboxVector](
     out_file: StrPath,
     *,
     logger: AnyLogger | None = None,
-    overwrite: bool = False,
+    overwrite: bool = True,
     wbw_env: WbEnvironment | None = None,
 ) -> T:
     if wbw_env is None:
