@@ -18,7 +18,7 @@ type AnyLogger = logging.Logger | logging.LoggerAdapter[logging.Logger]
 type AnyDEM = DEMProvider | Raster | StrPath
 type Resolution = tuple[int, int] | tuple[float, float]
 type EPSG = int
-type AnyCRS = WKTProvider | EPSG
+type AnyCRS = ConvertibleToWKT | EPSG
 
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
@@ -47,7 +47,7 @@ class StreamSlopeProvider(t.Protocol):
 
 
 @t.runtime_checkable
-class WKTProvider(t.Protocol):
+class ConvertibleToWKT(t.Protocol):
     def to_wkt(self) -> str: ...
 
 
