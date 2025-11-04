@@ -9,11 +9,16 @@ import logging.config
 import logging.handlers
 import queue
 import sys
+import threading
+import time
 import typing as t
 
-from slope_area._typing import AnyLogger, RichTableLogs, TrialLoggingContext
 from slope_area.enums import TrialStatus
 from slope_area.paths import LOGGING_CONFIG, PROJ_ROOT
+
+if t.TYPE_CHECKING:
+    from slope_area._typing import AnyLogger, RichTableLogs, TrialLoggingContext
+    from slope_area.console import RichTableRowData
 
 LOG_RECORD_BUILTIN_ATTRS = {
     'args',
@@ -57,12 +62,6 @@ _COLORS_RICH = {
     'WARNING': 'yellow',
     'ERROR': 'red',
     'CRITICAL': 'red',
-}
-_COLORS_TRIAL_STATUS = {
-    TrialStatus.NOT_STARTED: 'gray',
-    TrialStatus.RUNNING: 'cyan',
-    TrialStatus.FINISHED: 'green',
-    TrialStatus.ERRORED: 'red',
 }
 
 
@@ -160,13 +159,23 @@ class ErrorFilter(logging.Filter):
 
 class RichDictHandler(logging.Handler):
     def __init__(
-        self, logs: RichTableLogs, queue: queue.Queue[RichTableLogs | None]
+        self,
+        row_data: RichTableRowData,
+        queue: queue.Queue[RichTableLogs | None],
+        update_timer: float = 0.1,
     ) -> None:
         super().__init__()
         self.queue = queue
-        self.logs = logs
+        self.row_data = row_data
+        self.update_timer = update_timer
         self.setFormatter(logging.Formatter(fmt='[%(levelname)s] %(message)s'))
         self.setLevel(logging.DEBUG)
+
+        self.stop_event = threading.Event()
+        self.update_table_thread = threading.Thread(
+            target=self.send_logs, daemon=True
+        )
+        self.update_table_thread.start()
 
     def format(self, record: logging.LogRecord) -> str:
         levelname = record.levelname
@@ -177,28 +186,33 @@ class RichDictHandler(logging.Handler):
         record.levelname = levelname
         return formatted
 
+    def send_logs(self) -> None:
+        while True:
+            if self.stop_event.is_set():
+                break
+            self.queue.put_nowait({self.row_data.trial: self.row_data})
+            time.sleep(self.update_timer)
+
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        trial_name: str = getattr(record, 'trialName')
         trial_context: TrialLoggingContext | dict[str, t.Any] = getattr(
             record, 'trialContext', {}
         )
-
-        curr_data = self.logs[trial_name]
 
         status: TrialStatus | None = trial_context.get('trialStatus', None)
         exception: Exception | None = trial_context.get('trialException', None)
 
         if msg:
-            curr_data.message = msg
+            self.row_data.message = msg
         if status is not None:
-            status_color = _COLORS_TRIAL_STATUS[status]
-            curr_data.status = (
-                f'[{status_color}]{status.display()}[/{status_color}]'
-            )
+            self.row_data.status = status
         if exception is not None:
-            curr_data.exception = exception.__class__.__name__
-        self.queue.put_nowait({trial_name: curr_data})
+            self.row_data.exception = exception
+        self.queue.put_nowait({self.row_data.trial: self.row_data})
+
+        if status is TrialStatus.FINISHED:
+            self.stop_event.set()
+            self.update_table_thread.join()
 
 
 class TrialLoggerAdapter(logging.LoggerAdapter[logging.Logger]):

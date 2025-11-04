@@ -17,9 +17,6 @@ class TrialStatus(StrEnum):
     FINISHED = auto()
     ERRORED = auto()
 
-    def display(self) -> str:
-        return self.replace('_', ' ').capitalize()
-
 
 class Column(StrEnum):
     AREA_VALUES = 'area'

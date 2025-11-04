@@ -213,12 +213,10 @@ class Trial:
         return Path(self.context.out_dir)
 
     def set_logger_multiprocess(
-        self, q: TrialQueue, default_logs: RichTableLogs
+        self, q: TrialQueue, row_data: RichTableRowData
     ) -> None:
         qh = QueueHandler(q.logging)
-        logger = create_rich_logger(
-            self.__class__.__name__, default_logs, q.rich
-        )
+        logger = create_rich_logger(self.__class__.__name__, row_data, q.rich)
         logger.addHandler(qh)
         logger.setLevel(logging.DEBUG)
         self.logger = logger
@@ -424,6 +422,12 @@ class Trial:
             raise e
         else:
             self.logger_adapter.mark_finished()
+            self.logger.handlers = [
+                handler
+                for handler in self.logger.handlers
+                if not isinstance(handler, QueueHandler)
+            ]
+            self.logger.handlers.clear()
             return ret
 
 
@@ -452,7 +456,7 @@ class TrialsExecutor:
         }
 
     def run_trial_in_process(self, trial: Trial) -> TrialResult:
-        trial.set_logger_multiprocess(self.q, self.logs)
+        trial.set_logger_multiprocess(self.q, self.logs[trial.name])
         with turn_off_handlers('slopeArea', ('stdout', 'stderr')):
             return trial.run()
 
