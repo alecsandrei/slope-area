@@ -20,15 +20,15 @@ from whitebox_workflows import (
     VectorGeometry,
     VectorGeometryType,
 )
-from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
 
-from slope_area._typing import AnyCRS
 from slope_area.config import get_wbw_env
 from slope_area.logger import create_logger
 from slope_area.utils import resample
 
 if t.TYPE_CHECKING:
-    from slope_area._typing import AnyLogger, Resolution, StrPath
+    from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
+
+    from slope_area._typing import AnyCRS, AnyLogger, Resolution, StrPath
 
 
 m_logger = create_logger(__name__)

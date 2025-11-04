@@ -8,11 +8,12 @@ import typing as t
 import PySAGA_cmd
 import whitebox_workflows as wbw
 
-from slope_area._typing import AnyLogger
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
     from whitebox_workflows.whitebox_workflows import WbEnvironment
+
+    from slope_area._typing import AnyLogger
 
 m_logger = create_logger(__name__)
 

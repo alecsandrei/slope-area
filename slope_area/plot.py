@@ -5,7 +5,6 @@ from functools import partial
 from itertools import groupby
 import typing as t
 
-from matplotlib.axes import Axes
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,6 +14,8 @@ from slope_area.enums import Column
 from slope_area.logger import create_logger
 
 if t.TYPE_CHECKING:
+    from matplotlib.axes import Axes
+
     from slope_area._typing import PlotKind, StrPath
 
 m_logger = create_logger(__name__)

@@ -32,7 +32,7 @@ from slope_area.console import (
     rich_table_logs_thread,
 )
 from slope_area.enums import Column, SlopeAreaMethod, TrialStatus
-from slope_area.features import Outlet, Outlets, Raster
+from slope_area.features import Outlets, Raster
 from slope_area.geomorphometry import (
     DefaultSlopeProviders,
     StreamsComputationOutput,
@@ -66,6 +66,7 @@ if t.TYPE_CHECKING:
         StrPath,
         TrialLoggingContext,
     )
+    from slope_area.features import Outlet
 
 
 m_logger = create_logger(__name__)

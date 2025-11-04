@@ -6,9 +6,6 @@ from os import fspath
 from pathlib import Path
 import typing as t
 
-from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
-from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
-
 from slope_area._typing import SlopeProvider, StreamSlopeProvider
 from slope_area.config import get_saga_env, get_wbw_env
 from slope_area.logger import create_logger
@@ -21,6 +18,9 @@ from slope_area.utils import (
 )
 
 if t.TYPE_CHECKING:
+    from whitebox_workflows.whitebox_workflows import Raster as WhiteboxRaster
+    from whitebox_workflows.whitebox_workflows import Vector as WhiteboxVector
+
     from slope_area._typing import AnyLogger, SlopeProviders, StrPath
 
 m_logger = create_logger(__name__)
