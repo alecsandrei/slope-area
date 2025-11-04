@@ -7,7 +7,7 @@ Tool that can be used to generate slope-area plots and other analysis.
 1. [API Examples](#api-examples)
    - [Minimal example](#minimal-example)  
    - [Run trials with multiprocessing](#run-trials-with-multiprocessing)
-   - [Run trials with Builder objects](#run-trials-with-builder-objects)
+   - [Create trials with Trial factories](#create-trials-with-trial-factories)
    - [Run trials with custom slope providers](#run-trials-with-custom-slope-providers)
 2. [Installation](#installation)  
    - [Download SAGA GIS](#download-saga-gis)  
