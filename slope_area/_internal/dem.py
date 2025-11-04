@@ -300,22 +300,20 @@ class DEMTiles:
 @dataclass
 class DynamicVRT(DEMProvider):
     dem_source: DEMSource
-    out_parent: StrPath
     outlet_snap_distance: float
 
-    def get_dem(self, outlet: Outlet) -> VRT:
+    def get_dem(self, outlet: Outlet, out_file: StrPath) -> VRT:
         logger = m_logger.getChild(self.__class__.__name__)
-        out_dir = Path(self.out_parent) / outlet.name
-        makedirs(out_dir, exist_ok=True)
+        out_file = Path(out_file)
         dem_tiles = DEMTiles.from_outlet(
             dem_source=self.dem_source,
             outlet=outlet,
-            out_dir=Path(self.out_parent) / outlet.name,
+            out_dir=out_file.parent,
             outlet_snap_dist=self.outlet_snap_distance,
             wbw_env=get_wbw_env(),
             logger=logger,
         )
-        vrt = VRT.from_dem_tiles(dem_tiles, out_dir / 'dem.vrt')
+        vrt = VRT.from_dem_tiles(dem_tiles, out_file.with_suffix('.vrt'))
         if not vrt.crs.is_projected:
             vrt = vrt.define_projection(self.dem_source.crs)
         return vrt
