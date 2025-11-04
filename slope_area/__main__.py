@@ -84,6 +84,8 @@ def main() -> None:
     )
     dem_source = DEMSource(dem_dir, tiles, generalized_dem, crs=3844)
 
+    generalized_dem.compute_hydro_rasters()
+
     # ---- Read outlets ----
     logger.info('Reading outlets at %s' % outlets_path)
     gdf = gpd.read_file(outlets_path).sort_values(by='name')

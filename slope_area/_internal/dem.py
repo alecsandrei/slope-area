@@ -3,7 +3,7 @@ from __future__ import annotations
 import collections.abc as c
 import concurrent.futures
 from dataclasses import InitVar, dataclass, field
-from functools import cache, partial
+from functools import cache, cached_property, partial
 import logging
 from os import fspath, makedirs
 from pathlib import Path
@@ -24,6 +24,7 @@ from slope_area.features import Outlet, Outlets, Raster
 from slope_area.geomorphometry import (
     FlowAccumulationComputationOutput,
     compute_flow,
+    preprocess_dem,
 )
 from slope_area.logger import create_logger
 from slope_area.utils import redirect_warnings, timeit, write_whitebox
@@ -84,42 +85,26 @@ class VRT(Raster):
 class GeneralizedDEM(Raster):
     out_dir: StrPath
 
+    @cached_property
+    def rasters_exist(self) -> bool:
+        return all(raster.exists() for raster in self.get_raster_paths())
+
     @property
     def dem_preproc(self) -> WhiteboxRaster:
-        return self.get_flow_output().dem_preproc
+        return self.compute_hydro_rasters().dem_preproc
 
     @property
     def d8_pointer(self) -> WhiteboxRaster:
-        return self.get_flow_output().d8_pointer
+        return self.compute_hydro_rasters().d8_pointer
 
     @property
     def flow_accum(self) -> WhiteboxRaster:
-        return self.get_flow_output().flow_accumulation
+        return self.compute_hydro_rasters().flow_accumulation
 
-    def read_rasters(
-        self, rasters: c.Iterable[StrPath]
-    ) -> list[WhiteboxRaster]:
-        return [get_wbw_env().read_raster(fspath(raster)) for raster in rasters]
-
-    def compute_flow(
-        self, rasters: tuple[Path, Path, Path]
-    ) -> FlowAccumulationComputationOutput:
-        logger = m_logger.getChild(self.__class__.__name__)
-        flow = compute_flow(self.path, logger=logger)
-        outputs = (flow.dem_preproc, flow.d8_pointer, flow.flow_accumulation)
-        write_whitebox_func = partial(write_whitebox, logger=logger)
-        for wbw_raster, out_file in zip(outputs, rasters):
-            write_whitebox_func(wbw_raster, out_file)
-        return flow
-
-    def read_flow_output(
-        self, rasters: tuple[Path, Path, Path]
-    ) -> FlowAccumulationComputationOutput:
-        wbw_rasters = self.read_rasters(rasters)
-        return FlowAccumulationComputationOutput(*wbw_rasters)
-
-    def get_rasters(self, prefix: str) -> tuple[Path, Path, Path]:
+    @cache
+    def get_raster_paths(self) -> tuple[Path, Path, Path]:
         out_dir = Path(self.out_dir)
+        prefix = Path(self.path).stem + '_'
         return (
             out_dir / f'{prefix}dem_preproc.tif',
             out_dir / f'{prefix}d8_pointer.tif',
@@ -127,21 +112,37 @@ class GeneralizedDEM(Raster):
         )
 
     @cache
-    def get_flow_output(self) -> FlowAccumulationComputationOutput:
-        prefix = Path(self.path).stem + '_'
-        rasters = self.get_rasters(prefix)
-        if all(raster.exists() for raster in rasters):
-            m_logger.info(
-                'Found rasters %s'
-                % ', '.join([Path(raster).name for raster in rasters])
+    def read_rasters(self) -> FlowAccumulationComputationOutput:
+        wbw_env = get_wbw_env()
+        rasters = self.get_raster_paths()
+        if not self.rasters_exist:
+            raise FileNotFoundError(
+                'Run GeneralizedDEM.commpute_hydro_rasters before attempting to read the rasters'
             )
-            return self.read_flow_output(rasters)
-        else:
-            m_logger.info(
-                'Computing rasters %s'
-                % ', '.join([Path(raster).stem for raster in rasters])
+        return FlowAccumulationComputationOutput(
+            *[wbw_env.read_raster(fspath(raster)) for raster in rasters]
+        )
+
+    def compute_hydro_rasters(self) -> FlowAccumulationComputationOutput:
+        logger = m_logger.getChild(self.__class__.__name__)
+        if self.rasters_exist:
+            logger.info(
+                'Rasters %s found, skipping computation'
+                % ', '.join(fspath(path) for path in self.get_raster_paths())
             )
-            return self.compute_flow(rasters)
+            return self.read_rasters()
+
+        makedirs(self.out_dir, exist_ok=True)
+        rasters = self.get_raster_paths()
+        dem = preprocess_dem(self.path, logger=logger)
+        flow = compute_flow(dem, logger=logger)
+        outputs = (flow.dem_preproc, flow.d8_pointer, flow.flow_accumulation)
+        write_whitebox_func = partial(
+            write_whitebox, overwrite=False, logger=logger
+        )
+        for wbw_raster, out_file in zip(outputs, rasters):
+            write_whitebox_func(wbw_raster, out_file)
+        return flow
 
 
 class Feature(t.TypedDict):
