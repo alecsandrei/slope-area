@@ -302,14 +302,8 @@ class DynamicVRT(DEMProvider):
     out_parent: StrPath
     outlet_snap_distance: float
 
-    def get_dem(
-        self,
-        outlet: Outlet,
-        *,
-        logger: AnyLogger | None = None,
-    ) -> VRT:
-        if logger is None:
-            logger = m_logger.getChild(self.__class__.__name__)
+    def get_dem(self, outlet: Outlet) -> VRT:
+        logger = m_logger.getChild(self.__class__.__name__)
         out_dir = Path(self.out_parent) / outlet.name
         makedirs(out_dir, exist_ok=True)
         dem_tiles = DEMTiles.from_outlet(

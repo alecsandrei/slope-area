@@ -53,9 +53,4 @@ class WKTProvider(t.Protocol):
 
 @t.runtime_checkable
 class DEMProvider(t.Protocol):
-    def get_dem(
-        self,
-        outlet: Outlet,
-        *,
-        logger: AnyLogger | None = None,
-    ) -> Raster: ...
+    def get_dem(self, outlet: Outlet) -> StrPath: ...

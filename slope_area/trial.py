@@ -253,10 +253,7 @@ class Trial:
         dem = self.context.data.dem
         if isinstance(dem, DEMProvider):
             self.log('Getting the DEM raster from dem_provider')
-            return dem.get_dem(
-                outlet=self.context.data.outlet,
-                logger=self.logger_adapter,
-            )
+            return Raster(dem.get_dem(outlet=self.context.data.outlet))
         elif isinstance(dem, (str, PathLike)):
             return Raster(dem)
         return dem
