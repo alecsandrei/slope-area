@@ -70,9 +70,12 @@ class RichTableRowData:
             )
         return rendered
 
+    def get_placeholder_text(self) -> Text:
+        return Text('—', style='dim')
+
     def get_elapsed_time(self) -> Text:
         if self.elapsed_time is None:
-            return Text('—', style='dim')
+            return self.get_placeholder_text()
 
         if self.elapsed_time < 1:
             formatted = f'{self.elapsed_time * 1000:.0f} ms'
@@ -94,7 +97,7 @@ class RichTableRowData:
 
     def get_exception(self) -> Text:
         if self.exception is None:
-            return Text()
+            return self.get_placeholder_text()
         return Text(self.exception.__class__.__name__, style='red')
 
     def get_status(self) -> Text:
