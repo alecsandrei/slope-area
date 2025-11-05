@@ -423,11 +423,6 @@ class Trial:
             raise e
         else:
             self.logger_adapter.mark_finished()
-            self.logger.handlers = [
-                handler
-                for handler in self.logger.handlers
-                if not isinstance(handler, QueueHandler)
-            ]
             self.logger.handlers.clear()
             return ret
 
