@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import collections.abc as c
 from dataclasses import dataclass
 from functools import partial
-from itertools import groupby
-import operator
 import typing as t
 
 import matplotlib.pyplot as plt
@@ -18,7 +15,7 @@ from slope_area.logger import create_logger
 if t.TYPE_CHECKING:
     from matplotlib.axes import Axes
 
-    from slope_area._typing import PlotKind, StrPath
+    from slope_area._typing import AggFunc, PlotKind, StrPath
 
 m_logger = create_logger(__name__)
 
@@ -38,7 +35,7 @@ def slope_area_plot_func(
     area: pd.DataFrame = data[area_col]
     slope: pd.DataFrame = data[slope_col]
 
-    # Set slopee min gradient
+    # Set slope min gradient
     slope = np.clip(slope, a_min=config.min_gradient, a_max=None)
 
     # Compute bins
@@ -50,23 +47,36 @@ def slope_area_plot_func(
         config.log_interval,
     )
     area_bins = np.power(10, log_range)
-    half_bin_widths = np.append(np.diff(area_bins) / 2, 0)
-    acenters = area_bins + half_bin_widths
     bin_indices = np.digitize(area, area_bins, right=True)
     data = np.column_stack([slope, area, bin_indices])
 
-    # Sort data by bins, required by itertools.groupby
+    # Make sure bins are sorted
     data = data[data[:, 2].argsort()]
 
+    # Compute area bin centers if no area agg func was provided
+    if config.area_agg_func is None:
+        half_bin_widths = np.append(np.diff(area_bins) / 2, 0)
+        acenters = area_bins + half_bin_widths
+
     if config.kind == 'line':
-        mean_slopes = []
-        for bin, grouper in groupby(data, operator.itemgetter(2)):
-            mean = config.slope_agg_func([values[0] for values in grouper])
-            mean_slopes.append(mean)
-        acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
+        agg_slopes = []
+        agg_areas = []
+        for bin in np.unique(data[:, 2]):
+            subset = data[data[:, 2] == bin]
+
+            # Aggregated slope value
+            agg_slope = config.slope_agg_func(subset[:, 0])
+            agg_slopes.append(agg_slope)
+
+            # Aggregated area value
+            if config.area_agg_func is not None:
+                agg_area = config.area_agg_func(subset[:, 1])
+            else:
+                agg_area = acenters[int(bin) - 1]
+            agg_areas.append(agg_area)
         plt.plot(
-            acenters_subset,
-            mean_slopes,
+            agg_areas,
+            agg_slopes,
             marker='o',
             linestyle='-',
             linewidth=2,
@@ -115,7 +125,8 @@ class SlopeAreaPlotConfig:
     row: str | None = None
     log_interval: float = 0.25
     min_gradient: float = 0.01
-    slope_agg_func: c.Callable[[c.Sequence[float]], float] = np.mean
+    slope_agg_func: AggFunc = np.mean
+    area_agg_func: AggFunc = None  # None will default to the center of each bin
     col_wrap: int = -1
     height: int = 5
     aspect: int = 1
@@ -141,7 +152,6 @@ def set_plot_options(config: SlopeAreaPlotConfig, ax: Axes) -> None:
     ax.tick_params(labelsize=config.tick_font_size)
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
     ax.set_box_aspect(config.aspect)
 
     if config.hue is not None and config.legend:
@@ -163,7 +173,6 @@ def set_plot_options_facetgrid(
     )
     facet_grid.tick_params(labelsize=config.tick_font_size)
     facet_grid.set(xscale='log', yscale='log')
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
     plt.tight_layout(pad=2)
     if config.hue is not None and config.legend:
@@ -197,7 +206,7 @@ def slope_area_grid(
         col_wrap=col_wrap,
         legend_out=config.legend,
     )
-    slope = data[Column.SLOPE_VALUES]
+    slope = data[Column.SLOPE_VALUES].clip(lower=config.min_gradient)
     g = g.map_dataframe(
         slope_area_plot_func,
         Column.AREA_VALUES,

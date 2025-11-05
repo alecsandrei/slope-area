@@ -19,7 +19,7 @@ type AnyDEM = DEMProvider | Raster | StrPath
 type Resolution = tuple[int, int] | tuple[float, float]
 type EPSG = int
 type AnyCRS = ConvertibleToWKT | EPSG
-
+type AggFunc = c.Callable[[c.Sequence[float]], float]
 type TrialName = str
 type RichTableLogs = c.MutableMapping[TrialName, RichTableRowData]
 type SlopeProviders = c.Mapping[str, SlopeProvider | StreamSlopeProvider]
