@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc as c
 from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
@@ -105,6 +106,7 @@ class SlopeAreaPlotConfig:
     row: str | None = None
     log_interval: float = 0.25
     min_gradient: float = 0.01
+    slope_agg_func: c.Callable[[c.Sequence[float]], float] = np.mean
     col_wrap: int = -1
     height: int = 5
     aspect: int = 1
