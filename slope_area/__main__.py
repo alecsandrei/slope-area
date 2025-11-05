@@ -18,7 +18,6 @@ logger = create_logger(__name__)
 
 
 def main() -> None:
-    logger.debug('Running __main__ script.')
     dem = PROJ_ROOT / 'data' / 'raw' / 'copdem_30m.tif'
     out_dir = PROJ_ROOT / 'data' / 'processed' / '__main__'
     out_fig = out_dir / 'slope_area.png'
@@ -36,4 +35,5 @@ def main() -> None:
 
 
 if __name__ == '__main__':
+    logger.debug('Running __main__ script.')
     main()
