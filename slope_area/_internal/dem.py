@@ -3,7 +3,7 @@ from __future__ import annotations
 import collections.abc as c
 import concurrent.futures
 from dataclasses import InitVar, dataclass, field
-from functools import cache, cached_property, partial
+from functools import cache, partial
 import logging
 from os import fspath, makedirs
 from pathlib import Path
@@ -85,7 +85,6 @@ class VRT(Raster):
 class GeneralizedDEM(Raster):
     out_dir: StrPath
 
-    @cached_property
     def rasters_exist(self) -> bool:
         return all(raster.exists() for raster in self.get_raster_paths())
 
@@ -101,7 +100,6 @@ class GeneralizedDEM(Raster):
     def flow_accum(self) -> WhiteboxRaster:
         return self.compute_hydro_rasters().flow_accumulation
 
-    @cache
     def get_raster_paths(self) -> tuple[Path, Path, Path]:
         out_dir = Path(self.out_dir)
         prefix = Path(self.path).stem + '_'
@@ -111,7 +109,6 @@ class GeneralizedDEM(Raster):
             out_dir / f'{prefix}flow_accumulation.tif',
         )
 
-    @cache
     def read_rasters(self) -> FlowAccumulationComputationOutput:
         wbw_env = get_wbw_env()
         rasters = self.get_raster_paths()
@@ -123,6 +120,7 @@ class GeneralizedDEM(Raster):
             *[wbw_env.read_raster(fspath(raster)) for raster in rasters]
         )
 
+    @cache
     def compute_hydro_rasters(self) -> FlowAccumulationComputationOutput:
         logger = m_logger.getChild(self.__class__.__name__)
         if self.rasters_exist:
