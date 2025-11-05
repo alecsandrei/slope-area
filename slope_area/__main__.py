@@ -123,9 +123,7 @@ def main() -> None:
     # Computing the DEM for each outlet is a heavy process with the internal dataset.
     # The DynamicVRT allows to compute the VRT from DEMTiles in the process of each Trial
     # DynamicVRT follows the DEMProvider interface
-    dem_provider = DynamicVRT(
-        dem_source, out_dir_outlet, outlet_snap_distance=100
-    )
+    dem_provider = DynamicVRT(dem_source, outlet_snap_distance=100)
 
     trials = OutletTrialFactory(
         context=TrialFactoryContext(
