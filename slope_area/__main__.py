@@ -70,7 +70,7 @@ def main() -> None:
         title_font_size=10,
         legend_font_size=10,
         tick_font_size=14,
-        add_vlines=False,
+        add_bins=False,
         kind='line',
         show=True,
     )
@@ -114,6 +114,7 @@ def main() -> None:
         outlet=outlet,
         resolutions=resolutions,
     ).generate()
+    trials[0].run().plot()
     results = trials.run(max_workers=max_workers)
     results.plot(config=plot_config, out_fig=out_fig_resolution)
 

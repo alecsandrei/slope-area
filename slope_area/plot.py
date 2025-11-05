@@ -95,7 +95,7 @@ def slope_area_plot_func(
             **plot_kwargs,
         )
 
-    if config.add_vlines:
+    if config.add_bins:
         plt.vlines(
             area_bins,
             ymin=ymin or slope.min(),
@@ -136,7 +136,7 @@ class SlopeAreaPlotConfig:
     label_font_size: float = 16
     title_font_size: float = 10
     tick_font_size: float = 14
-    add_vlines: bool = False
+    add_bins: bool = False
     kind: PlotKind = 'line'
     grid: bool = True
     legend_font_size: float = 10
