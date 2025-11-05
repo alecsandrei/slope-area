@@ -126,7 +126,9 @@ class SlopeAreaPlotConfig:
     log_interval: float = 0.25
     min_gradient: float = 0.01
     slope_agg_func: AggFunc = np.mean
-    area_agg_func: AggFunc = None  # None will default to the center of each bin
+    area_agg_func: AggFunc | None = (
+        None  # None will default to the center of each bin
+    )
     col_wrap: int = -1
     height: int = 5
     aspect: int = 1
