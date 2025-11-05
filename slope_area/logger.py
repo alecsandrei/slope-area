@@ -13,7 +13,7 @@ import threading
 import time
 import typing as t
 
-from slope_area.enums import TrialStatus
+from slope_area.enums import TrialStatus, Verbose
 from slope_area.paths import LOGGING_CONFIG, PROJ_ROOT
 
 if t.TYPE_CHECKING:
@@ -309,5 +309,22 @@ def setup_logging() -> None:
     logging.config.dictConfig(config)
 
 
+def set_logging_level(level: int = logging.INFO) -> None:
+    logger = logging.getLogger('slopeArea')
+    logger.setLevel(level)
+
+
 def turn_off_logging() -> None:
-    logging.getLogger('slopeArea').disabled = True
+    set_logging_level(logging.CRITICAL + 1)
+
+
+def set_verbose(level: Verbose | int = 3):
+    match level:
+        case Verbose.ZERO:
+            turn_off_logging()
+        case Verbose.ONE:
+            set_logging_level(logging.WARNING)
+        case Verbose.TWO:
+            set_logging_level(logging.INFO)
+        case Verbose.THREE:
+            set_logging_level(logging.DEBUG)
