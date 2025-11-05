@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import cache
 import os
+import shutil
 import sys
 import typing as t
 
@@ -28,16 +29,17 @@ def get_wbw_env() -> WbEnvironment:
 
 @cache
 def get_saga_env() -> PySAGA_cmd.SAGA:
-    env = PySAGA_cmd.SAGA(os.environ.get('saga_cmd', 'saga_cmd'))
+    path = shutil.which('saga_cmd') or os.environ.get('saga_cmd', None)
+    if path is None:
+        m_logger.warning(
+            'saga_cmd not found in PATH or as an environment variable.'
+            ' Attempting a search.'
+        )
+    else:
+        m_logger.debug('saga_cmd found at %s' % path)
+    env = PySAGA_cmd.SAGA(saga_cmd=path)
     m_logger.info('Initialized SAGAGIS Environment')
     return env
-
-
-def get_saga_raster_suffix(saga: PySAGA_cmd.SAGA) -> str:
-    if saga.version is None or saga.version.major <= 8:
-        return '.sdat'
-    else:
-        return '.tif'
 
 
 def is_notebook(logger: AnyLogger) -> bool:
