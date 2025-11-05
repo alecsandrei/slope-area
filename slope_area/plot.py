@@ -4,6 +4,7 @@ import collections.abc as c
 from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
+import operator
 import typing as t
 
 import matplotlib.pyplot as plt
@@ -36,23 +37,31 @@ def slope_area_plot_func(
         plt.sca(ax)
     area: pd.DataFrame = data[area_col]
     slope: pd.DataFrame = data[slope_col]
+
+    # Set slopee min gradient
     slope = np.clip(slope, a_min=config.min_gradient, a_max=None)
+
+    # Compute bins
     areamin = area.min() - 0.01
     areamax = area.max() + 1
-    area_bins = 10 ** np.arange(
+    log_range = np.arange(
         np.log10(areamin),
         np.log10(areamax) + config.log_interval,
         config.log_interval,
     )
+    area_bins = np.power(10, log_range)
     half_bin_widths = np.append(np.diff(area_bins) / 2, 0)
     acenters = area_bins + half_bin_widths
     bin_indices = np.digitize(area, area_bins, right=True)
     data = np.column_stack([slope, area, bin_indices])
+
+    # Sort data by bins, required by itertools.groupby
     data = data[data[:, 2].argsort()]
+
     if config.kind == 'line':
         mean_slopes = []
-        for bin, grouper in groupby(data, lambda arr: arr[2]):
-            mean = float(np.mean([values[0] for values in grouper]))
+        for bin, grouper in groupby(data, operator.itemgetter(2)):
+            mean = config.slope_agg_func([values[0] for values in grouper])
             mean_slopes.append(mean)
         acenters_subset = acenters[np.unique(data[:, 2]).astype(int) - 1]
         plt.plot(
@@ -66,9 +75,9 @@ def slope_area_plot_func(
         )
     elif config.kind == 'scatter':
         sns.scatterplot(
-            x='area',
-            y='slope',
-            data=pd.DataFrame(data, columns=['slope', 'area', 'bin']),
+            x=area_col,
+            y=slope_col,
+            data=pd.DataFrame(data, columns=[slope_col, area_col, 'bin']),
             s=10,
             alpha=0.3,
             edgecolors='black',
