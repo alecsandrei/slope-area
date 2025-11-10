@@ -116,7 +116,7 @@ Details: [https://docs.astral.sh/uv/getting-started/installation/](https://docs.
 ```sh
 git clone https://github.com/alecsandrei/slope-area
 cd slope-area
-uv sync --frozen --dev
+uv sync --frozen --all-groups
 ```
 
 ### Activate environment
