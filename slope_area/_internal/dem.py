@@ -85,6 +85,7 @@ class VRT(Raster):
 class GeneralizedDEM(Raster):
     out_dir: StrPath
 
+    @property
     def rasters_exist(self) -> bool:
         return all(raster.exists() for raster in self.get_raster_paths())
 
